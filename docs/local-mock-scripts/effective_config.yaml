@@ -1,0 +1,43 @@
+schema_version: 1
+test_name: hhc5431-one-hour-history-localstack
+run_id: hhc5431-20260928-2150-2250
+source:
+  api_root: http://44.221.91.30:8888/api/
+  project_uri: launchPad_ca141bd38c8fe5081
+  facility_sk: 5431
+  inventory_json: C:/Projects/sajid-projects/ai-skyspark-data-worker-processor/docs/HHC-5431.json
+  expected_equipment: 250
+  expected_points: 2716
+  username_env: SKYSPARK_USERNAME
+  password_env: SKYSPARK_PASSWORD
+  history_batch_ids: 500
+  request_timeout_seconds: 30
+history:
+  start_utc: '2026-09-28T21:50:00Z'
+  end_utc: '2026-09-28T22:50:00Z'
+  window_minutes: 5
+  expected_windows: 12
+  include_all_synthetic_points: true
+  missing_value_status: no_observation
+  non_historized_status: not_historized
+synthetic:
+  target_distinct_point_ids: 10000000
+  ids_per_job: 500
+  rows_per_csv_shard: 500000
+  facility_copy_label: HHC-5431
+localstack:
+  endpoint_url: http://127.0.0.1:4566
+  region: us-east-1
+  queue_name: hhc5431-history-hour-20260928-2150-2250
+  dlq_name: hhc5431-history-hour-20260928-2150-2250-dlq
+  max_receive_count: 4
+  send_batch_size: 10
+  receive_batch_size: 10
+  visibility_timeout_seconds: 300
+worker:
+  job_slots: 4
+output:
+  root: C:/Projects/sajid-projects/ai-skyspark-data-worker-processor/docs/local-mock-results
+  run_directory: hhc5431-history-hour-20260928-2150-2250
+  csv_encoding: utf-8
+  upload_to_s3: false

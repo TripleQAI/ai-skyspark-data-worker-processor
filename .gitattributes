@@ -1,0 +1,9 @@
+# Reviewed scripts are pinned by SHA-256 of their LF bytes; a CRLF checkout
+# (core.autocrlf=true) changes the digest and the worker rejects the script.
+*.py text eol=lf
+
+# Committed with CRLF; kept byte-for-byte. The original scripts' digests are
+# recorded in docs/source-contract-status.md and must not change.
+orginal-scripts/*.py -text
+src/ingestion/adapters/control/postgres.py -text
+tests/integration/test_phase7_replay.py -text

@@ -1,0 +1,51 @@
+# Live SkySpark readers for the AWS development environment. Paths are
+# relative to the worker image's script root (readers/skyspark, packaged by
+# Dockerfile.worker SCRIPT_ROOT_DIR). Each sha256 pins the exact LF file;
+# tests/unit/test_live_readers.py fails if a script and its digest diverge.
+schema_version: 1
+readers:
+  - id: skyspark.equipment_points@2
+    feed: metadata
+    validators: [metadata_references@1]
+    targets: [s3]
+    execution:
+      path: skyspark_metadata.py
+      sha256: f7d5aa27673bdc2042c0507dd6221c1127530d7de353ef654c1b6542c473fa68
+      timeout_seconds: 900
+      max_output_bytes: 4096
+      env_names: &reader_env [RESOURCE_CONFIG_PATH, SKYSPARK_SOURCE_CREDENTIALS]
+      optional_env_names: &aws_env
+        - AWS_REGION
+        - AWS_DEFAULT_REGION
+        - AWS_ENDPOINT_URL
+        - AWS_CONTAINER_CREDENTIALS_RELATIVE_URI
+        - AWS_CONTAINER_CREDENTIALS_FULL_URI
+        - AWS_CONTAINER_AUTHORIZATION_TOKEN
+        - AWS_ACCESS_KEY_ID
+        - AWS_SECRET_ACCESS_KEY
+        - AWS_SESSION_TOKEN
+      source_call_slots: 1
+  - id: skyspark.rulespark@2
+    feed: rules
+    validators: [equipment_query_coverage@1]
+    targets: [s3]
+    execution:
+      path: skyspark_rules.py
+      sha256: 96d19f8f86bf5316ce0e48416476ae908121abaf6ba4ffeb317a4eb2052109a1
+      timeout_seconds: 300
+      max_output_bytes: 4096
+      env_names: *reader_env
+      optional_env_names: *aws_env
+      source_call_slots: 1
+  - id: skyspark.hisread@2
+    feed: history
+    validators: [history_window_coverage@1]
+    targets: [s3]
+    execution:
+      path: skyspark_history.py
+      sha256: 94c3bbe5204ac3f520a9706a0d9690a792faddc69847b11cbe8693ea28889527
+      timeout_seconds: 120
+      max_output_bytes: 4096
+      env_names: *reader_env
+      optional_env_names: *aws_env
+      source_call_slots: 1

@@ -1,0 +1,37 @@
+# Approved site scope for the AWS development scale test.
+#
+# Every generated site duplicates one real SkySpark site. Each site presents
+# replica.equipment_per_site equipment with replica.points_per_equipment
+# historized points each, under site-namespaced IDs, and reads the real site's
+# values. Expand with:
+#
+#   python scripts/generate_scale_binding.py --scope config/environments/aws-dev/scope.yaml
+#
+# The output binding goes to the git-ignored private/ folder because it names
+# the real source site. Replace every REPLACE_ value first; the generator
+# refuses placeholders.
+schema_version: 1
+profile_id: aws-dev
+tenant_id: dev-tenant
+project_id: dev-scale
+# The project's Haystack API URL: the SkySpark API root plus the project name.
+endpoint: http://44.221.91.30:8888/api/REPLACE_WITH_PROJECT
+# Secrets Manager secret holding {"username": ..., "password": ...}.
+secret_ref: aws-secretsmanager://arn:aws:secretsmanager:us-east-1:REPLACE_WITH_ACCOUNT:secret:REPLACE_WITH_SECRET_NAME
+# The real site every replica duplicates: its Haystack id, without "@".
+source_site_ref: REPLACE_WITH_SOURCE_SITE_REF
+sites:
+  count: 1000
+  first_index: 1
+  # Python format string; letters, digits, _ and - only.
+  ref_format: "dev-site-{index:04d}"
+replica:
+  equipment_per_site: 200
+  points_per_equipment: 50
+history_source_lag_minutes: 5
+history_lookback_windows: 0
+# The source site's IANA zone and the tz tag SkySpark writes on rule rows.
+rules_source_timezone: REPLACE_WITH_IANA_ZONE
+rules_source_tz_tags: [REPLACE_WITH_SKYSPARK_TZ_TAG]
+rules_settlement_minutes: 60
+rules_lookback_days: 0

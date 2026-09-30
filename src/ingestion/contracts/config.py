@@ -6,6 +6,7 @@ Python/Axon code supplied by a job message.
 
 from __future__ import annotations
 
+import re
 from datetime import time
 from enum import StrEnum
 from typing import Literal
@@ -94,6 +95,18 @@ class PipelineProfile(StrictModel):
         return self
 
 
+class SourceReplica(StrictModel):
+    """Scale-test fan-out: every approved site re-reads its source site and
+    presents a fixed equipment/point shape under site-namespaced virtual IDs.
+
+    Replica output is synthetic topology over real source values. It exists to
+    measure the pipeline at estate scale and must not be treated as tenant data.
+    """
+
+    equipment_per_site: int = Field(ge=1, le=10_000)
+    points_per_equipment: int = Field(ge=1, le=1_000)
+
+
 class SourceBinding(StrictModel):
     schema_version: Literal[1]
     profile_id: str
@@ -109,6 +122,7 @@ class SourceBinding(StrictModel):
     rules_settlement_minutes: int = Field(default=0, ge=0, le=1440)
     rules_lookback_days: int = Field(default=0, ge=0, le=7)
     rules_source_tz_tags: tuple[str, ...] = ("UTC",)
+    source_replica: SourceReplica | None = None
 
     @field_validator("approved_sites")
     @classmethod
@@ -145,6 +159,11 @@ class SourceBinding(StrictModel):
         if (not self.rules_source_tz_tags or len(self.rules_source_tz_tags) != len(set(self.rules_source_tz_tags))
                 or any(not tag for tag in self.rules_source_tz_tags)):
             raise ValueError("rules_source_tz_tags require unique nonempty tags")
+        if self.source_replica is not None and any(
+            not re.fullmatch(r"[A-Za-z0-9_-]+", site) for site in self.approved_sites
+        ):
+            # Replica IDs are "<site_ref>.e<n>..."; a dot in the site would make them ambiguous.
+            raise ValueError("replica site references may contain only letters, digits, _ and -")
         return self
 
 

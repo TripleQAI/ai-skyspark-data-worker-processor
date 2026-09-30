@@ -1,0 +1,42 @@
+schema_version: 1
+profile_id: aws-dev
+source_policy:
+  # Project-wide cap on simultaneous SkySpark calls, shared by every worker task.
+  max_concurrent_calls: 12
+  max_attempts: 4
+feeds:
+  metadata:
+    schedule:
+      kind: weekly
+      day: SUN
+      at_utc: "03:00"
+    reader: skyspark.equipment_points@2
+    selector: approved_sites
+    partition:
+      by: siteRef
+      max_ids: 1
+    validator: metadata_references@1
+    target: s3
+  rules:
+    schedule:
+      kind: daily
+      at_utc: "02:00"
+    reader: skyspark.rulespark@2
+    selector: all_certified_equipment
+    partition:
+      by: siteRef
+      max_ids: 200
+    validator: equipment_query_coverage@1
+    target: s3
+  history:
+    schedule:
+      kind: interval
+      every_minutes: 5
+    reader: skyspark.hisread@2
+    selector: certified_historized_points
+    partition:
+      by: siteRef
+      max_ids: 500
+      window_minutes: 5
+    validator: history_window_coverage@1
+    target: s3

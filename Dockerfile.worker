@@ -3,6 +3,8 @@ FROM ${PYTHON_BASE_IMAGE}
 
 ARG RESOURCE_CONFIG_FILE
 ARG SCRIPT_ROOT_DIR
+# Live SkySpark readers (readers/skyspark) need "[source]"; fixture images leave it empty.
+ARG PACKAGE_EXTRAS=""
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
@@ -15,7 +17,7 @@ COPY ${RESOURCE_CONFIG_FILE} ./resources.yaml
 COPY ${SCRIPT_ROOT_DIR}/ ./scripts/
 COPY scripts/secret_preflight.py ./build_check/secret_preflight.py
 RUN python -B build_check/secret_preflight.py --root /app
-RUN pip install --no-cache-dir .
+RUN pip install --no-cache-dir ".${PACKAGE_EXTRAS}"
 
 USER 65532:65532
 ENTRYPOINT ["skyspark-control"]

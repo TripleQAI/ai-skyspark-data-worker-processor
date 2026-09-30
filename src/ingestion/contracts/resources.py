@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Literal
 
@@ -152,6 +153,41 @@ class RulesReadPolicy(StrictModel):
     request_timeout_seconds: float = Field(gt=0, le=300)
 
 
+_TAG_FILTER = re.compile(r"[A-Za-z][A-Za-z0-9_]*(?: (?:and|or) (?:not )?[A-Za-z][A-Za-z0-9_]*)*")
+
+
+class SourceClientPolicy(StrictModel):
+    """How live SkySpark readers connect and what they accept as coverage.
+
+    ``provider`` requires an explicit provider completeness receipt, which live
+    SkySpark does not return today, so live reads fail closed. ``observed``
+    derives the receipt from the response itself (no error grid, no truncation
+    marker, every requested ID answered). That is weaker evidence and is meant
+    for development and scale-test environments only; raw evidence records it.
+    """
+
+    receipt_mode: Literal["provider", "observed"] = "provider"
+    credentials_env: str = Field(min_length=1)
+    equipment_filter: str = "equip"
+    point_filter: str = "point"
+    truncation_meta_markers: tuple[str, ...] = ("trunc", "limit")
+    verify_rules_equipment_scope: bool = True
+
+    @model_validator(mode="after")
+    def safe_filters(self) -> "SourceClientPolicy":
+        if not self.credentials_env.isidentifier():
+            raise ValueError("credentials_env must be an environment variable name")
+        for value in (self.equipment_filter, self.point_filter):
+            # Tag-only expressions; arbitrary Axon never enters configuration.
+            if not _TAG_FILTER.fullmatch(value):
+                raise ValueError("source filters may contain only tag names joined by and/or/not")
+        if not self.truncation_meta_markers or any(
+            not marker or marker != marker.casefold() for marker in self.truncation_meta_markers
+        ):
+            raise ValueError("truncation markers must be nonempty lowercase fragments")
+        return self
+
+
 class ConfigArtifactPolicy(StrictModel):
     max_bundle_bytes: int = Field(ge=1, le=16_777_216)
 
@@ -197,6 +233,7 @@ class ResourceConfig(StrictModel):
     metadata_read: MetadataReadPolicy
     history_read: HistoryReadPolicy | None = None
     rules_read: RulesReadPolicy | None = None
+    source_client: SourceClientPolicy | None = None
     config_artifacts: ConfigArtifactPolicy
     inventory_artifacts: InventoryArtifactPolicy
     workflow: WorkflowPolicy

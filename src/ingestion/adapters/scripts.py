@@ -98,6 +98,8 @@ class RegisteredScriptHandler:
                 "excluded_history_point_ids": binding.excluded_history_point_ids_by_site.get(job.site_ref, ()),
                 "rules_timezone": binding.rules_source_timezone,
                 "rules_tz_tags": binding.rules_source_tz_tags,
+                "replica": (binding.source_replica.model_dump(mode="json")
+                            if binding.source_replica else None),
             },
             "target": feed.target.value,
         }, separators=(",", ":")).encode("utf-8")

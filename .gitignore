@@ -32,3 +32,6 @@ docs/skyspark-ingestion-architecture.md
 docs/skyspark-ingestion-architecture.html
 docs/skyspark-ingestion-section-3.html
 local/fixtures/phase0/pilot-binding.example.yaml
+
+# Generated bindings name the real source site; keep them local.
+config/environments/*/private/

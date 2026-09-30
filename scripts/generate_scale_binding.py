@@ -1,0 +1,132 @@
+"""Expand a scale-test scope spec into a validated SourceBinding YAML.
+
+Every generated site duplicates one real source site. The binding maps each
+site to that source siteRef and carries the replica shape the live readers
+use. The planned work per run is printed so capacity is visible up front.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import math
+import sys
+from pathlib import Path
+from typing import Literal
+
+import yaml
+from pydantic import Field
+
+from ingestion.config.loader import _load_yaml
+from ingestion.contracts.config import (
+    FeedKind, PipelineProfile, SourceBinding, SourceReplica, StrictModel,
+)
+
+
+PLACEHOLDER = "REPLACE_"
+
+
+class SiteRange(StrictModel):
+    count: int = Field(ge=1, le=100_000)
+    first_index: int = Field(default=1, ge=0)
+    ref_format: str = Field(min_length=1)
+
+
+class ScaleScope(StrictModel):
+    schema_version: Literal[1]
+    profile_id: str
+    tenant_id: str
+    project_id: str
+    endpoint: str
+    secret_ref: str
+    source_site_ref: str = Field(pattern=r"^[A-Za-z0-9_:\-.]+$")
+    sites: SiteRange
+    replica: SourceReplica
+    history_source_lag_minutes: int = 0
+    history_lookback_windows: int = 0
+    rules_source_timezone: str = "UTC"
+    rules_source_tz_tags: tuple[str, ...] = ("UTC",)
+    rules_settlement_minutes: int = 0
+    rules_lookback_days: int = 0
+
+
+def placeholders(value: object, path: str = "") -> list[str]:
+    if isinstance(value, str):
+        return [path] if PLACEHOLDER in value else []
+    if isinstance(value, dict):
+        return [found for key, item in value.items() for found in placeholders(item, f"{path}.{key}".lstrip("."))]
+    if isinstance(value, (list, tuple)):
+        return [found for index, item in enumerate(value) for found in placeholders(item, f"{path}[{index}]")]
+    return []
+
+
+def build_binding(scope: ScaleScope) -> SourceBinding:
+    sites: dict[str, str] = {}
+    for index in range(scope.sites.first_index, scope.sites.first_index + scope.sites.count):
+        site_ref = scope.sites.ref_format.format(index=index)
+        if site_ref in sites:
+            raise ValueError("ref_format produces duplicate site references")
+        sites[site_ref] = scope.source_site_ref
+    data = scope.model_dump(mode="json", exclude={"sites", "source_site_ref", "replica"})
+    return SourceBinding.model_validate({
+        **data, "schema_version": 1, "approved_sites": sites,
+        "source_replica": scope.replica.model_dump(mode="json"),
+    })
+
+
+def plan_summary(binding: SourceBinding, profile: PipelineProfile | None) -> dict[str, object]:
+    replica = binding.source_replica
+    sites = len(binding.approved_sites)
+    equipment = replica.equipment_per_site
+    points = equipment * replica.points_per_equipment
+    summary: dict[str, object] = {
+        "sites": sites, "equipment_per_site": equipment, "points_per_site": points,
+        "total_equipment": sites * equipment, "total_points": sites * points,
+    }
+    if profile is not None:
+        feeds = profile.feeds
+        summary["jobs_per_run"] = {
+            FeedKind.METADATA.value: sites,
+            FeedKind.RULES.value: sites * math.ceil(equipment / feeds[FeedKind.RULES].partition.max_ids),
+            FeedKind.HISTORY.value: sites * math.ceil(points / feeds[FeedKind.HISTORY].partition.max_ids),
+        }
+    return summary
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--scope", type=Path, required=True)
+    parser.add_argument("--profile", type=Path, help="profile used to print jobs per run")
+    parser.add_argument("--output", type=Path, help="default: <scope dir>/private/binding.yaml")
+    parser.add_argument("--allow-placeholders", action="store_true",
+                        help="validate the shape only; the output cannot run against SkySpark")
+    args = parser.parse_args(argv)
+
+    raw = _load_yaml(args.scope)
+    unresolved = placeholders(raw)
+    if unresolved and not args.allow_placeholders:
+        print(f"scope still has placeholders: {', '.join(unresolved)}", file=sys.stderr)
+        return 2
+    if PLACEHOLDER in str(raw.get("rules_source_timezone", "")):
+        # Only reachable with --allow-placeholders; the binding requires an IANA zone.
+        raw["rules_source_timezone"] = "UTC"
+    scope = ScaleScope.model_validate(raw)
+    binding = build_binding(scope)
+    profile_path = args.profile or args.scope.with_name("profile.yaml")
+    profile = PipelineProfile.model_validate(_load_yaml(profile_path)) if profile_path.exists() else None
+    if profile is not None and profile.profile_id != binding.profile_id:
+        raise ValueError("scope profile_id does not match the profile")
+
+    output = args.output or args.scope.parent / "private" / "binding.yaml"
+    output.parent.mkdir(parents=True, exist_ok=True)
+    header = ("# Generated by scripts/generate_scale_binding.py from "
+              f"{args.scope.as_posix()}. Edit the scope, not this file.\n")
+    output.write_text(header + yaml.safe_dump(
+        binding.model_dump(mode="json", exclude_defaults=True), sort_keys=False,
+    ), encoding="utf-8", newline="\n")
+    print(json.dumps({"binding": output.as_posix(), **plan_summary(binding, profile)}, indent=2))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

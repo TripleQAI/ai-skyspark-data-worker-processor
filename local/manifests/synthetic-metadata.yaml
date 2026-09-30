@@ -1,0 +1,21 @@
+schema_version: 1
+readers:
+  - id: skyspark.equipment_points@1
+    feed: metadata
+    validators: [metadata_references@1]
+    targets: [s3]
+    execution:
+      path: synthetic_metadata.py
+      sha256: a27d1a4a3d34b8e05e5cb6b916e55b48dadef2e7e8bbdc234ea2dc6ca73500d7
+      timeout_seconds: 30
+      max_output_bytes: 4096
+      env_names: [RESOURCE_CONFIG_PATH, AWS_ENDPOINT_URL, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY]
+      source_call_slots: 1
+  - id: skyspark.rulespark@1
+    feed: rules
+    validators: [equipment_query_coverage@1]
+    targets: [s3, timescale]
+  - id: skyspark.hisread@1
+    feed: history
+    validators: [history_window_coverage@1]
+    targets: [s3, timescale]

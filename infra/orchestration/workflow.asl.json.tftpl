@@ -1,0 +1,76 @@
+{
+  "Comment": "Plan a scheduled SkySpark run and wait for durable certification",
+  "StartAt": "PlanRun",
+  "TimeoutSeconds": ${timeout_seconds},
+  "States": {
+    "PlanRun": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {"FunctionName": "${planner_arn}", "Payload.$": "$"},
+      "ResultSelector": {"run.$": "$.Payload"},
+      "ResultPath": "$.plan",
+      "Retry": [{"ErrorEquals": ["Lambda.ServiceException", "Lambda.AWSLambdaException", "Lambda.SdkClientException", "Lambda.TooManyRequestsException"], "IntervalSeconds": 2, "MaxAttempts": 3, "BackoffRate": 2}],
+      "Next": "WaitForCoverage"
+    },
+    "WaitForCoverage": {"Type": "Wait", "Seconds": ${poll_seconds}, "Next": "ReadRunStatus"},
+    "ReadRunStatus": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${status_arn}",
+        "Payload": {
+          "run_id.$": "$.plan.run.run_id",
+          "tenant_id.$": "$.plan.run.tenant_id",
+          "project_id.$": "$.plan.run.project_id",
+          "config_hash.$": "$.plan.run.config_hash",
+          "feed.$": "$.plan.run.feed",
+          "lookback_run_ids.$": "$.plan.run.lookback_run_ids"
+        }
+      },
+      "ResultSelector": {"status.$": "$.Payload"},
+      "ResultPath": "$.progress",
+      "Retry": [{"ErrorEquals": ["Lambda.ServiceException", "Lambda.AWSLambdaException", "Lambda.SdkClientException", "Lambda.TooManyRequestsException"], "IntervalSeconds": 2, "MaxAttempts": 3, "BackoffRate": 2}],
+      "Next": "EvaluateCoverage"
+    },
+    "EvaluateCoverage": {
+      "Type": "Choice",
+      "Choices": [
+        {"Variable": "$.progress.status.state", "StringEquals": "certified", "Next": "ChooseCertifiedFeed"},
+        {"Variable": "$.progress.status.state", "StringEquals": "partial", "Next": "Partial"},
+        {"Variable": "$.progress.status.state", "StringEquals": "blocked", "Next": "Blocked"},
+        {"Variable": "$.progress.status.state", "StringEquals": "pending", "Next": "WaitForCoverage"}
+      ],
+      "Default": "UnexpectedStatus"
+    },
+    "ChooseCertifiedFeed": {
+      "Type": "Choice",
+      "Choices": [
+        {"Variable": "$.plan.run.feed", "StringEquals": "metadata", "Next": "PublishMetadataInventory"}
+      ],
+      "Default": "Certified"
+    },
+    "PublishMetadataInventory": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${inventory_arn}",
+        "Payload": {
+          "run_id.$": "$.plan.run.run_id",
+          "tenant_id.$": "$.plan.run.tenant_id",
+          "project_id.$": "$.plan.run.project_id",
+          "config_hash.$": "$.plan.run.config_hash",
+          "feed.$": "$.plan.run.feed",
+          "lookback_run_ids.$": "$.plan.run.lookback_run_ids"
+        }
+      },
+      "ResultSelector": {"inventory.$": "$.Payload"},
+      "ResultPath": "$.published_inventory",
+      "Retry": [{"ErrorEquals": ["Lambda.ServiceException", "Lambda.AWSLambdaException", "Lambda.SdkClientException", "Lambda.TooManyRequestsException"], "IntervalSeconds": 2, "MaxAttempts": 3, "BackoffRate": 2}],
+      "Next": "Certified"
+    },
+    "Certified": {"Type": "Succeed"},
+    "Partial": {"Type": "Fail", "Error": "PartialCoverage", "Cause": "Some sites were not certified"},
+    "Blocked": {"Type": "Fail", "Error": "BlockedCoverage", "Cause": "Run could not certify any sites"},
+    "UnexpectedStatus": {"Type": "Fail", "Error": "UnexpectedStatus", "Cause": "Status reader returned an unknown state"}
+  }
+}

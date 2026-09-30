@@ -1,0 +1,15 @@
+{
+  "version": "demo-inventory-v1",
+  "tenant_id": "demo-tenant",
+  "project_id": "demo-project",
+  "sites": {
+    "site-a": {
+      "equipment_ids": ["equip-a-1", "equip-a-2", "equip-a-3"],
+      "historized_point_ids": ["point-a-1", "point-a-2", "point-a-3", "point-a-4", "point-a-5"]
+    },
+    "site-b": {
+      "equipment_ids": ["equip-b-1"],
+      "historized_point_ids": ["point-b-1", "point-b-2"]
+    }
+  }
+}

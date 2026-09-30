@@ -1,0 +1,21 @@
+schema_version: 1
+readers:
+  - id: skyspark.equipment_points@1
+    feed: metadata
+    validators: [metadata_references@1]
+    targets: [s3, timescale]
+    execution:
+      path: approved_script.py
+      sha256: d9029e69cded228d1355d57389daf7ed54cf5fd30f62a7f54bf3d9e412dd7238
+      timeout_seconds: 5
+      max_output_bytes: 4096
+      env_names: []
+      source_call_slots: 1
+  - id: skyspark.rulespark@1
+    feed: rules
+    validators: [equipment_query_coverage@1]
+    targets: [s3, timescale]
+  - id: skyspark.hisread@1
+    feed: history
+    validators: [history_window_coverage@1]
+    targets: [s3, timescale]

@@ -1,0 +1,15 @@
+.git/
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.pytest-tmp/
+docs/
+tests/
+orginal-scripts/
+local/.env
+local/pilot/
+local/probe-results/
+local/state/
+local/fixtures/
+*.csv

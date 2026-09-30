@@ -1,0 +1,3 @@
+fsk,id,navName,siteRef,equipRef,equip,ahu
+demo-project,equip-demo-1,Synthetic AHU,site-demo-1,,m:,m:
+demo-project,equip-demo-2,Synthetic VAV,site-demo-1,equip-demo-1,m:,

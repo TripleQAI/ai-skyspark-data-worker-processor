@@ -1,0 +1,13 @@
+Metadata-Version: 2.4
+Name: ai-skyspark-data-worker-processor
+Version: 0.1.0
+Summary: Config-driven SkySpark ingestion workers
+Requires-Python: >=3.12
+Requires-Dist: boto3<2,>=1.35
+Requires-Dist: pydantic<3,>=2.10
+Requires-Dist: psycopg[binary]<4,>=3.2
+Requires-Dist: PyYAML<7,>=6
+Provides-Extra: source
+Requires-Dist: phable; extra == "source"
+Provides-Extra: dev
+Requires-Dist: pytest<10,>=8; extra == "dev"

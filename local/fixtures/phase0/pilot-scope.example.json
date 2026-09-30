@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "site_ref": "pilot-site",
+  "source_site_ref": "source-site-demo",
+  "equipment_ids": ["equip-demo-1", "equip-demo-2"],
+  "history_point_ids": ["point-demo-1", "point-demo-2"],
+  "history_batch_sizes": [1, 2],
+  "rules_batch_sizes": [1, 2],
+  "window_start_utc": "2026-09-28T10:00:00Z",
+  "window_end_utc": "2026-09-28T10:05:00Z",
+  "rule_day": "2026-09-27",
+  "max_response_rows": 50000,
+  "max_estimated_bytes": 33554432
+}

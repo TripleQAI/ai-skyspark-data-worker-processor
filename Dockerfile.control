@@ -1,0 +1,19 @@
+ARG PYTHON_BASE_IMAGE
+FROM ${PYTHON_BASE_IMAGE}
+
+ARG RESOURCE_CONFIG_FILE
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+WORKDIR /app
+USER 0:0
+COPY pyproject.toml ./
+COPY src/ ./src/
+COPY ${RESOURCE_CONFIG_FILE} ./resources.yaml
+COPY scripts/secret_preflight.py ./build_check/secret_preflight.py
+RUN python -B build_check/secret_preflight.py --root /app
+RUN pip install --no-cache-dir .
+
+USER 65532:65532
+ENTRYPOINT ["skyspark-control"]

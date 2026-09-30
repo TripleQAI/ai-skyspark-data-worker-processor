@@ -1,0 +1,34 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.pytest-tmp/
+.venv/
+.env
+.env.*
+!.env.example
+*.log
+local/state/
+local/pilot/
+local/probe-results/
+
+# Terraform working directories and downloaded provider binaries
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+crash.log
+
+# Generated mock output; regenerated locally, far too large to track
+docs/local-mock-results/
+
+# Customer-identifying material: real facility inventory and the design notes
+# that reference the production project identifier. Kept local only.
+docs/HHC-5431.json
+docs/hhc5431-one-hour-local-test.yaml
+docs/hhc5431-one-hour-local-test-results.md
+docs/hhc5431-one-hour-workflow.md
+docs/hhc5431-one-hour-workflow.canonical.json
+docs/skyspark-ingestion-architecture.md
+docs/skyspark-ingestion-architecture.html
+docs/skyspark-ingestion-section-3.html
+local/fixtures/phase0/pilot-binding.example.yaml

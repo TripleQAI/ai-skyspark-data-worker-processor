@@ -1,0 +1,6 @@
+[console_scripts]
+skyspark-control = ingestion.control_cli:main
+skyspark-ingestion = ingestion.cli:main
+skyspark-schedules = ingestion.schedule_cli:main
+skyspark-source-probe = ingestion.probe_cli:main
+skyspark-workflow = ingestion.workflow_cli:main

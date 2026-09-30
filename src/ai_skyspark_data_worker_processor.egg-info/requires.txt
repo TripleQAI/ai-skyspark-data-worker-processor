@@ -1,0 +1,10 @@
+boto3<2,>=1.35
+pydantic<3,>=2.10
+psycopg[binary]<4,>=3.2
+PyYAML<7,>=6
+
+[dev]
+pytest<10,>=8
+
+[source]
+phable

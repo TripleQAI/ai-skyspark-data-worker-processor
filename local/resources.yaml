@@ -1,0 +1,108 @@
+region: us-east-1
+buckets:
+  - skyspark-raw-local
+  - skyspark-certified-local
+  - skyspark-quarantine-local
+work_queues:
+  - history_live
+  - rules_nightly
+  - metadata_sweep
+  - backfill
+backfill_queue: backfill
+feed_routes:
+  history: history_live
+  rules: rules_nightly
+  metadata: metadata_sweep
+max_receive_count: 4
+dispatch:
+  batch_limit: 100
+  lease_seconds: 120
+  base_backoff_seconds: 5
+  max_backoff_seconds: 300
+publication:
+  event_bus: skyspark-certified-local
+  source: insite.skyspark.ingestion
+  detail_type: SkySparkCertifiedBatch
+  batch_limit: 100
+  lease_seconds: 120
+  base_backoff_seconds: 5
+  max_backoff_seconds: 300
+recovery:
+  batch_limit: 100
+  expired_running_after_seconds: 900
+  never_started_after_seconds: 604800
+  max_redrives: 2
+backfill:
+  max_source_calls_per_project: 2
+  job_slots_per_task: 2
+  max_jobs_per_request: 1000
+  max_window_age_days: 365
+  max_request_age_hours: 24
+  clock_skew_minutes: 5
+measurement:
+  max_s3_objects_per_prefix: 10000
+control_loop:
+  dispatch_idle_seconds: 1
+  publication_idle_seconds: 2
+  recovery_idle_seconds: 60
+metadata_inspection:
+  max_csv_bytes: 67108864
+  max_equipment_rows: 10000
+  max_point_rows: 100000
+  max_issue_examples: 20
+  historized_true_values: ['true', 'm:', '✓']
+  historized_false_values: ['', 'false']
+metadata_read:
+  max_pages_per_kind: 100
+  max_rows_per_page: 10000
+  max_entities_per_site: 100000
+  max_page_bytes: 8388608
+  request_timeout_seconds: 30
+history_read:
+  max_ids: 500
+  max_rows: 10000
+  max_observations: 100000
+  max_response_bytes: 67108864
+  request_timeout_seconds: 30
+  max_split_depth: 12
+  max_descendant_jobs: 8192
+  min_split_window_seconds: 30
+rules_read:
+  max_ids: 200
+  max_rows: 10000
+  max_response_bytes: 16777216
+  request_timeout_seconds: 30
+config_artifacts:
+  max_bundle_bytes: 1048576
+inventory_artifacts:
+  max_snapshot_bytes: 67108864
+  max_age_hours: 336
+workflow:
+  poll_seconds: 30
+  max_run_seconds:
+    history: 900
+    rules: 10800
+    metadata: 14400
+worker:
+  job_slots: 4
+  config_cache_entries: 128
+  sqs_batch_size: 4
+  long_poll_seconds: 20
+  visibility_seconds: 180
+  lease_seconds: 180
+  heartbeat_seconds: 30
+  source_permit_lease_seconds: 180
+  source_permit_heartbeat_seconds: 30
+  source_permit_retry_seconds: 1
+  scale_in_protection:
+    enabled: false
+    expires_minutes: 10
+    refresh_seconds: 60
+    http_timeout_seconds: 3
+storage:
+  raw_bucket: skyspark-raw-local
+  certified_bucket: skyspark-certified-local
+  max_raw_bytes: 67108864
+  max_certified_bytes: 67108864
+  max_certified_rows: 100000
+  history_correction_policy: append_revision

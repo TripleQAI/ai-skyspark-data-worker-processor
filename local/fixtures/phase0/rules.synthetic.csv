@@ -1,0 +1,2 @@
+fsk,targetRef,ruleRef,date,tz,spark,dur,periods,points,priority,severity
+demo-project,equip-demo-1,rule-demo-1,2026-09-27,UTC,synthetic-trigger,5min,1,point-demo-1,1,warning

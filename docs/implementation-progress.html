@@ -1,0 +1,88 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>SkySpark ingestion implementation progress</title><style>
+:root{color-scheme:light;--ink:#182331;--muted:#526174;--line:#dbe3eb;--blue:#245b84}
+*{box-sizing:border-box}html{scroll-behavior:smooth}
+body{margin:0;font-family:Segoe UI,Arial,sans-serif;color:var(--ink);background:#fff;line-height:1.58}
+header{background:#112d43;color:#fff;padding:24px max(28px,calc((100vw - 1250px)/2))}
+header strong{font-size:1.2rem}header p{margin:4px 0 0;color:#d7e5ee;font-size:.92rem}
+main{max-width:1250px;margin:auto;padding:28px 32px 75px}
+h1{font-size:2rem;line-height:1.2}h2{font-size:1.4rem;margin:42px 0 14px;padding-bottom:7px;border-bottom:1px solid var(--line)}
+h3{font-size:1.12rem;margin:31px 0 10px}p{margin:10px 0 15px}a{color:#12638f}
+table{border-collapse:collapse;width:100%;margin:16px 0 22px;font-size:.9rem}
+th,td{border:1px solid var(--line);padding:9px 11px;vertical-align:top;text-align:left}
+th{background:#e9f0f5}tr:nth-child(even) td{background:#fafcfd}
+pre{overflow:auto;background:#f3f6f9;border:1px solid var(--line);border-radius:7px;padding:14px;font-size:.82rem;line-height:1.45}
+code{font-family:Consolas,'SFMono-Regular',monospace}:not(pre)>code{background:#eef3f7;padding:.1em .28em;border-radius:3px;font-size:.88em}
+.diagram{border:1px solid var(--line);border-radius:8px;margin:20px 0;overflow:auto;max-height:680px;background:#0b1020}
+.diagram svg{display:block;width:min(100%,960px);height:auto;margin:auto}.diagram figcaption{background:#f5f8fb;padding:7px 12px;font-size:.78rem;color:var(--muted)}
+.diagram details{background:#fff;padding:8px 12px}.diagram details pre{white-space:pre-wrap}
+@media(max-width:800px){main{padding:20px 17px 50px}header{padding:20px 17px}table{display:block;overflow-x:auto}}
+</style></head><body><header><strong>SkySpark ingestion implementation progress</strong><p>Phase status · 28 September 2026</p></header><main><h1 id="implementation-progress">Implementation progress</h1>
+<p><strong>Current slice:</strong> Phases 0–8 have user acceptance or a passing local gate. The implementation includes certified metadata inventory, five-minute history, nightly equipment rules, configurable S3 or TimescaleDB targets for every feed, raw S3 evidence, audited replay through a bounded backfill worker, and contiguous site checkpoints. Generic SQS workers, AWS schedule/workflow definitions, and local control services are also present.</p>
+<table>
+<thead>
+<tr>
+<th>Plan phase</th>
+<th>Status</th>
+<th>Evidence / next dependency</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>0. Source proof and credential repair</td>
+<td><strong>Accepted by user, 28 September 2026</strong></td>
+<td>All four exports have a reproducible read-only report and synthetic replacements. The bounded <code>phable</code> probe and image-build secret preflight are implemented. A user-authorized live check against the supplied project URI matched 250 equipment and 2,716 points; 1/100/500-ID five-minute history reads succeeded, and equipment-filtered rules reproduced the export day's 37 detections. History is a wide grid, so the production reader must count non-null point cells. One point lacks <code>siteRef</code>. The selected source root is <code>http://44.221.91.30:8888/api/</code>. A rotated credential reference, durable tenant/project/site mapping, source completeness/correction limits, and provider/consumer review are carried forward as production prerequisites. See <code>source-contract-status.md</code> and <code>phase0-live-source-evidence.md</code>.</td>
+</tr>
+<tr>
+<td>1. Package, contracts, config resolver</td>
+<td>Implemented for local planning</td>
+<td>Strict Pydantic contracts, reviewed plugin manifest, deterministic run/job IDs, CLI, and unit tests. Worker commands follow in later phases.</td>
+</tr>
+<tr>
+<td>2. Docker and control store</td>
+<td><strong>Local gate passed, 28 September 2026</strong></td>
+<td>Compose now includes a bounded two-site source-contract fixture and a one-shot metadata planner alongside dispatcher/worker services. LocalStack bootstrap creates three buckets, four work queues, four DLQs, and an event bus, and is repeatable. PostgreSQL and TimescaleDB use named volumes; a two-stage gate proved committed jobs/outbox and an S3 marker survive container restarts, replanning adds zero jobs, and dispatch sends exactly two SQS references. A separate container smoke run planned, dispatched, and certified two metadata jobs with physical S3 evidence. The fixture is JSON contract-shaped, not a Haystack protocol emulator; source adapters remain in later phases.</td>
+</tr>
+<tr>
+<td>3. Generic queue worker and raw evidence</td>
+<td><strong>Local resilience gate passed, 28 September 2026</strong></td>
+<td>SQS reference consumption, bounded slots, lease/visibility heartbeat, per-project source permits, fenced certification, and immutable S3 raw/target evidence are implemented. Live LocalStack/PostgreSQL tests killed a worker after raw upload, recovered the job once, rejected a stale fence, acknowledged a duplicate, exhausted retries into a DLQ, redrove a checked reference, and enforced raw-byte caps. Nonretryable schema/cap failures from a reviewed script use exit code 65; a live fence commits quarantine before SQS acknowledgment. The rebuilt Docker worker certified two new metadata jobs. Production Haystack readers, source access pause policy, and source-specific child splits remain in feed implementation.</td>
+</tr>
+<tr>
+<td>4. Metadata reader and certified inventory</td>
+<td><strong>Local contract gate passed, 28 September 2026</strong></td>
+<td>A bounded page reader requires stable snapshot/completion receipts, preserves Haystack tags, classifies site-level points, and validates links. A reviewed local HTTP fixture script writes raw and certified S3 evidence. After all site jobs certify, a PostgreSQL/S3 publisher verifies physical evidence, refuses partial or shrinking scope, records adds/changes without tombstones, applies configured <code>his</code> exclusions, and writes a versioned inventory that history/rules can pin. The metadata-only Step Functions branch invokes its publisher Lambda; Terraform validated locally. The Docker smoke run certified two jobs and published 3 equipment/3 points. Supplied exports still assess to 250 equipment and 2,716 points, including five accepted site-level points and one unresolved point lacking <code>siteRef</code>. Live SkySpark grids lack a completeness receipt, so production certification remains blocked on the provider contract.</td>
+</tr>
+<tr>
+<td>5. Five-minute point history</td>
+<td><strong>Local contract gate passed, 28 September 2026</strong></td>
+<td>Certified historized IDs form exact half-open five-minute jobs (500 IDs/job pilot cap). The local reviewed reader requires provider-complete ID/window/row receipts, resolves wide-grid point columns, preserves source timestamp/time zone/status and typed values, and writes immutable raw S3 plus Timescale receipts. Source lag and up to 12 lookback windows are binding controls; Step Functions waits for all planned runs. Cap/timeout partitions split into durable deterministic ID/time children; only certified leaves advance the site cursor. Local tests cover populated/empty grids, late lookback, append-only corrected values, split/failure/duplicate/outage, and end-to-end LocalStack/Timescale evidence. The observed live SkySpark <code>hisRead</code> grid has no completeness/truncation receipt, so production history certification remains blocked on a provider contract.</td>
+</tr>
+<tr>
+<td>6. Nightly equipment rules</td>
+<td><strong>Local contract gate passed, 28 September 2026</strong></td>
+<td>The planner selects a complete source-local day and bounded prior-day overlap from reviewed binding values. The local reader requires complete equipment-ID/day/window receipts, including for zero detections; maps the supplied rule fields; and writes immutable raw and candidate S3 evidence through a pinned script. A provisional equipment/rule/day detection key and row revision hash distinguish corrections; duplicate keys within one query fail closed. Unit tests reject missing, truncated, mismatched and duplicate results. A synthetic 250-equipment run partitions 200/49/1 across two sites; control-store evidence shows one site advances while an incomplete partition blocks the other. All 37 pilot detections resolved to the sampled equipment in the Phase 0 assessment. Live SkySpark still needs a provider completeness receipt and stable detection-ID semantics; rules-to-TimescaleDB remains Phase 7.</td>
+</tr>
+<tr>
+<td>7. Certified sinks and recovery</td>
+<td><strong>Local sink and recovery gate passed, 28 September 2026</strong></td>
+<td>The six feed/target combinations write raw S3 plus certified S3 JSONL or TimescaleDB receipts. New metadata and rule revision/batch tables use bounded COPY staging and idempotent keys; metadata inventory publication can read Timescale evidence. A separate rules sink process exits after commit, then retry produces the same batch receipt; fenced certification advances the site checkpoint once. Replay needs a separately recorded active approval grant and atomically records audit, jobs, and backfill dispatch; a smaller backfill worker shares but caps project source permits. LocalStack EventBridge accepted certified publication IDs. Read-only storage measurement and retention preview are implemented. No object expiration or table aging is active until measured retention values and evidence lifetimes are approved.</td>
+</tr>
+<tr>
+<td>8. Registered standalone scripts</td>
+<td><strong>Local script gate passed, 28 September 2026</strong></td>
+<td>Reviewed manifests pin script ID/version, relative path, SHA256 digest, capabilities, context/result contract, timeout, output/context caps, and source-call slots. A file-based context supplies job and secret reference without credentials on argv. The versioned result binds script/config/job identity, raw key, target, and full scope before physical evidence verification. Separate registered utility scripts run under a bounded subprocess and record completed/rejected/failed outcomes in the control DB without certification authority. Local tests covered accepted scripts and durable audit for unknown ID, forbidden target, invalid output, and timeout. The subprocess uses the worker OS identity; per-script memory/CPU isolation and separate ECS task identity are Phase 9 deployment work. Production readers still require complete-query source receipts.</td>
+</tr>
+<tr>
+<td>9. AWS scheduling and orchestration</td>
+<td><strong>Local infrastructure gate passed; AWS sandbox gate pending</strong></td>
+<td>A new foundation root plans three private versioned/KMS S3 buckets, three immutable ECR repositories, and optional AWS service endpoints in an existing VPC. The four queue/worker services and dispatcher/publisher/recovery services remain disabled by default; exact tenant/project S3 prefixes are required, with broad and unapproved prefixes rejected in mocked plans. The inventory Lambda can read an optional TimescaleDB secret without exposing it to planner/status. Dashboards and alarms cover queue age/backlog/DLQs, running tasks, workflow failures, Lambda errors/throttles, and Scheduler delivery failures. All three Terraform roots validate and seven mocked plan checks pass with Terraform 1.13.5/AWS provider 6.66.0. LocalStack verified a versioned config object, Standard state machine execution, and three disabled schedules. No AWS resources were applied or images pushed. Network/IAM enforcement, real schedule delivery, Fargate certification, and alarm delivery still need the sandbox gate.</td>
+</tr>
+<tr>
+<td>10. Capacity and rollout</td>
+<td>Pending</td>
+<td>Benchmark source, worker, S3, control DB, and TimescaleDB throughput; recalculate jobs, slots, task count, freshness, and cost from measured data. Roll out by approved project cohort and prove the sustained-load gate.</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Next implementation target:</strong> Phase 9's AWS sandbox deployment and acceptance gate when the account, network, database-secret references, and reviewed image digests are available. Production metadata, history, and rules certification still need the data provider's explicit complete-query receipts and a disposition for the point without <code>siteRef</code>. History and rule correction revisions do not nominate a canonical latest version without source ordering. Retention expiration and table aging need measured policy values; the Phase 7 preview does not apply them. Phase 10 remains pending; local gates do not establish AWS deployment readiness.</p>
+<p>On 28 September 2026, the full suite passed <strong>177 tests</strong> with disposable PostgreSQL and TimescaleDB databases and LocalStack. Phase 9 also passed seven mocked Terraform plan checks across the three roots and a disposable LocalStack Scheduler/Step Functions/S3 smoke test. Earlier gates still verify six feed/target script paths, Timescale metadata inventory publication, rules sink recovery, approved replay, script audits, and LocalStack EventBridge acceptance. The Phase 2 restart gate and Phase 4 metadata Docker smoke run remain recorded. The shared <code>history_live</code> queue still contains previously dispatched references; Phase 9 tests did not consume it. Live read-only SkySpark pilot calls are summarized in <code>phase0-live-source-evidence.md</code>. Lambda and Step Functions local tests cannot prove deployed networking, IAM, Fargate execution, or notification delivery. All three Terraform roots passed formatting and validation with Terraform 1.13.5 and AWS provider 6.66.0. An AWS sandbox deployment remains a separate gate. The project currently has no Git repository or configured remote. No original script was rewritten.</p></main></body></html>

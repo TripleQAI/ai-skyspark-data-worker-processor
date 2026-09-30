@@ -1,0 +1,14 @@
+schema_version: 1
+readers:
+  - id: skyspark.equipment_points@1
+    feed: metadata
+    validators: [metadata_references@1]
+    targets: [s3, timescale]
+  - id: skyspark.rulespark@1
+    feed: rules
+    validators: [equipment_query_coverage@1]
+    targets: [s3, timescale]
+  - id: skyspark.hisread@1
+    feed: history
+    validators: [history_window_coverage@1]
+    targets: [s3, timescale]

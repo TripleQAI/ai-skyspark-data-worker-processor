@@ -1,0 +1,4 @@
+fsk,id,dis,siteRef,equipRef,his,kind,point
+demo-project,point-demo-1,Synthetic supply temp,site-demo-1,equip-demo-1,m:,Number,m:
+demo-project,point-demo-2,Synthetic site point,site-demo-1,,m:,Bool,m:
+demo-project,point-demo-3,Synthetic unresolved point,,,,Number,m:

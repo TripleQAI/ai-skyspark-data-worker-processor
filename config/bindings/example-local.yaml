@@ -1,0 +1,13 @@
+schema_version: 1
+profile_id: default
+tenant_id: demo-tenant
+project_id: demo-project
+endpoint: http://skyspark-fixture:8080/api/
+secret_ref: local-secret://skyspark-demo
+approved_sites:
+  site-a: demoSiteA
+  site-b: demoSiteB
+rules_source_timezone: UTC
+rules_source_tz_tags: [UTC]
+rules_settlement_minutes: 0
+rules_lookback_days: 2

@@ -1,0 +1,1 @@
+"""PostgreSQL control-state implementation."""

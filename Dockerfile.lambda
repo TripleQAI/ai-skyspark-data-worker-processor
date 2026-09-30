@@ -1,0 +1,13 @@
+ARG PYTHON_LAMBDA_BASE_IMAGE
+FROM ${PYTHON_LAMBDA_BASE_IMAGE}
+
+ARG RESOURCE_CONFIG_FILE
+WORKDIR ${LAMBDA_TASK_ROOT}
+COPY pyproject.toml ./
+COPY src/ ./src/
+COPY ${RESOURCE_CONFIG_FILE} ./resources.yaml
+COPY scripts/secret_preflight.py ./build_check/secret_preflight.py
+RUN python -B build_check/secret_preflight.py --root "${LAMBDA_TASK_ROOT}"
+RUN pip install --no-cache-dir --target "${LAMBDA_TASK_ROOT}" .
+
+CMD ["ingestion.aws_handlers.plan_handler"]

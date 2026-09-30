@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "project_id": "demo-project",
+  "max_batch_ids": 500,
+  "max_response_rows": 1000,
+  "sites": {
+    "demoSiteA": {
+      "equipment": [
+        {"id": "equip-a-1", "navName": "Synthetic AHU A", "siteRef": "demoSiteA"},
+        {"id": "equip-a-2", "navName": "Synthetic VAV A", "siteRef": "demoSiteA"}
+      ],
+      "points": [
+        {"id": "point-a-1", "dis": "Synthetic supply temp A", "siteRef": "demoSiteA", "equipRef": "equip-a-1", "his": true, "kind": "Number"},
+        {"id": "point-a-2", "dis": "Synthetic status A", "siteRef": "demoSiteA", "equipRef": "equip-a-2", "his": true, "kind": "Bool"}
+      ],
+      "history": [
+        {"ts": "2026-09-28T10:00:00Z", "point_id": "point-a-1", "value": 21.5},
+        {"ts": "2026-09-28T10:02:00Z", "point_id": "point-a-2", "value": true}
+      ],
+      "rules": [
+        {"fsk": "demo-project", "targetRef": "equip-a-1", "ruleRef": "rule-demo-1", "date": "2026-09-27", "tz": "UTC", "spark": "synthetic-trigger", "dur": 300, "periods": 1, "points": ["point-a-1"], "priority": 2, "severity": "warning", "alarmMessageText": "Synthetic equipment alarm", "helpMessageText": "Inspect supply temperature"}
+      ]
+    },
+    "demoSiteB": {
+      "equipment": [
+        {"id": "equip-b-1", "navName": "Synthetic AHU B", "siteRef": "demoSiteB"}
+      ],
+      "points": [
+        {"id": "point-b-1", "dis": "Synthetic supply temp B", "siteRef": "demoSiteB", "equipRef": "equip-b-1", "his": true, "kind": "Number"}
+      ],
+      "history": [
+        {"ts": "2026-09-28T10:01:00Z", "point_id": "point-b-1", "value": 20.0}
+      ],
+      "rules": []
+    }
+  }
+}

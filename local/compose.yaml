@@ -1,0 +1,187 @@
+name: skyspark-ingestion-local
+
+services:
+  localstack:
+    image: localstack/localstack:2026.8.2
+    environment:
+      LOCALSTACK_AUTH_TOKEN: ${LOCALSTACK_AUTH_TOKEN:?Set LOCALSTACK_AUTH_TOKEN}
+      PERSISTENCE: "1"
+      SERVICES: s3,sqs,events,stepfunctions,scheduler,secretsmanager
+    ports:
+      - "127.0.0.1:4566:4566"
+    volumes:
+      - localstack-data:/var/lib/localstack
+
+  skyspark-fixture:
+    image: ${PYTHON_BASE_IMAGE:?Set a reviewed Python image digest}
+    command: [python, /fixture/server.py]
+    environment:
+      SKYSPARK_FIXTURE_FILE: /fixture/data.json
+      PORT: "8080"
+    volumes:
+      - ./fixture:/fixture:ro
+    expose:
+      - "8080"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=2).close()"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  control-db:
+    image: postgres@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193
+    environment:
+      POSTGRES_DB: ingestion_control
+      POSTGRES_USER: ingestion
+      POSTGRES_PASSWORD: ${CONTROL_DB_PASSWORD:?Set CONTROL_DB_PASSWORD}
+    ports:
+      - "127.0.0.1:15432:5432"
+    volumes:
+      - control-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ingestion -d ingestion_control"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  timescale-db:
+    image: timescale/timescaledb@sha256:252a443e2936039b83dd8da1373d01e59e932d1054fa6adf1bc061f1d56ae60a
+    environment:
+      POSTGRES_DB: ingestion_target
+      POSTGRES_USER: ingestion
+      POSTGRES_PASSWORD: ${TARGET_DB_PASSWORD:?Set TARGET_DB_PASSWORD}
+    ports:
+      - "127.0.0.1:15433:5432"
+    volumes:
+      - timescale-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ingestion -d ingestion_target"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  dispatcher:
+    profiles: [pipeline]
+    build:
+      context: ..
+      dockerfile: Dockerfile.control
+      args:
+        PYTHON_BASE_IMAGE: ${PYTHON_BASE_IMAGE:?Set a reviewed Python image digest}
+        RESOURCE_CONFIG_FILE: local/resources.yaml
+    environment:
+      CONTROL_DATABASE_URL: postgresql://ingestion:${CONTROL_DB_PASSWORD}@control-db:5432/ingestion_control
+      AWS_ENDPOINT_URL: http://localstack:4566
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+      AWS_DEFAULT_REGION: us-east-1
+    command: [dispatch-service, --environment, local, --resources, /app/resources.yaml]
+    depends_on:
+      control-db:
+        condition: service_healthy
+      localstack:
+        condition: service_started
+    restart: unless-stopped
+
+  planner:
+    profiles: [pipeline]
+    build:
+      context: ..
+      dockerfile: Dockerfile.control
+      args:
+        PYTHON_BASE_IMAGE: ${PYTHON_BASE_IMAGE:?Set a reviewed Python image digest}
+        RESOURCE_CONFIG_FILE: local/resources.yaml
+    environment:
+      CONTROL_DATABASE_URL: postgresql://ingestion:${CONTROL_DB_PASSWORD}@control-db:5432/ingestion_control
+      PLANNER_PROFILE_FILE: /app/config/profiles/default.yaml
+      PLANNER_BINDING_FILE: /app/config/bindings/example-local.yaml
+      PLANNER_MANIFEST_FILE: /app/manifests/contract-metadata.yaml
+      PLANNER_RESOURCES_FILE: /app/resources.yaml
+      PLANNER_ENVIRONMENT: local
+      PLANNER_FEED: metadata
+    entrypoint: [python, /app/plan_fixture_metadata.py]
+    volumes:
+      - ../config:/app/config:ro
+      - ./manifests:/app/manifests:ro
+      - ./plan_fixture_metadata.py:/app/plan_fixture_metadata.py:ro
+    depends_on:
+      control-db:
+        condition: service_healthy
+      skyspark-fixture:
+        condition: service_healthy
+    restart: "no"
+
+  publisher:
+    profiles: [pipeline]
+    build:
+      context: ..
+      dockerfile: Dockerfile.control
+      args:
+        PYTHON_BASE_IMAGE: ${PYTHON_BASE_IMAGE:?Set a reviewed Python image digest}
+        RESOURCE_CONFIG_FILE: local/resources.yaml
+    environment:
+      CONTROL_DATABASE_URL: postgresql://ingestion:${CONTROL_DB_PASSWORD}@control-db:5432/ingestion_control
+      AWS_ENDPOINT_URL: http://localstack:4566
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+      AWS_DEFAULT_REGION: us-east-1
+    command: [publication-service, --environment, local, --resources, /app/resources.yaml]
+    depends_on:
+      control-db:
+        condition: service_healthy
+      localstack:
+        condition: service_started
+    restart: unless-stopped
+
+  recovery:
+    profiles: [pipeline]
+    build:
+      context: ..
+      dockerfile: Dockerfile.control
+      args:
+        PYTHON_BASE_IMAGE: ${PYTHON_BASE_IMAGE:?Set a reviewed Python image digest}
+        RESOURCE_CONFIG_FILE: local/resources.yaml
+    environment:
+      CONTROL_DATABASE_URL: postgresql://ingestion:${CONTROL_DB_PASSWORD}@control-db:5432/ingestion_control
+      AWS_ENDPOINT_URL: http://localstack:4566
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+      AWS_DEFAULT_REGION: us-east-1
+    command: [recovery-service, --environment, local, --resources, /app/resources.yaml]
+    depends_on:
+      control-db:
+        condition: service_healthy
+      localstack:
+        condition: service_started
+    restart: unless-stopped
+
+  metadata-worker:
+    profiles: [pipeline]
+    build:
+      context: ..
+      dockerfile: Dockerfile.worker
+      args:
+        PYTHON_BASE_IMAGE: ${PYTHON_BASE_IMAGE:?Set a reviewed Python image digest}
+        RESOURCE_CONFIG_FILE: local/resources.yaml
+        SCRIPT_ROOT_DIR: local/scripts
+    environment:
+      CONTROL_DATABASE_URL: postgresql://ingestion:${CONTROL_DB_PASSWORD}@control-db:5432/ingestion_control
+      TARGET_DATABASE_URL: postgresql://ingestion:${TARGET_DB_PASSWORD}@timescale-db:5432/ingestion_target
+      RESOURCE_CONFIG_PATH: /app/resources.yaml
+      AWS_ENDPOINT_URL: http://localstack:4566
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+      AWS_DEFAULT_REGION: us-east-1
+    command: [worker, --environment, local, --resources, /app/resources.yaml, --script-root, /app/scripts, --queue-class, metadata_sweep]
+    depends_on:
+      control-db:
+        condition: service_healthy
+      timescale-db:
+        condition: service_healthy
+      localstack:
+        condition: service_started
+    restart: unless-stopped
+
+volumes:
+  localstack-data:
+  control-data:
+  timescale-data:

@@ -1,0 +1,680 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SkySpark ingestion worker processor — AWS deployment</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #f7f8fa;
+    --card: #ffffff;
+    --text: #1f2937;
+    --muted: #6b7280;
+    --border: #d1d5db;
+    --code: #111827;
+    --code-text: #f9fafb;
+    --accent: #2563eb;
+    --ok: #15803d;
+    --warn: #b45309;
+    --bad: #b91c1c;
+    --note-bg: #eff6ff;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #111827;
+      --card: #1f2937;
+      --text: #f9fafb;
+      --muted: #cbd5e1;
+      --border: #374151;
+      --code: #0b1020;
+      --code-text: #f9fafb;
+      --accent: #60a5fa;
+      --ok: #4ade80;
+      --warn: #fbbf24;
+      --bad: #f87171;
+      --note-bg: #1e293b;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: Arial, Helvetica, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.6;
+  }
+  main {
+    max-width: 1180px;
+    margin: 40px auto;
+    padding: 0 24px 48px;
+  }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 28px;
+    margin-bottom: 24px;
+  }
+  h1, h2, h3 { line-height: 1.25; }
+  h1 { margin-top: 0; font-size: 2rem; }
+  h2 { margin-top: 0; font-size: 1.35rem; }
+  h3 { font-size: 1.08rem; margin-top: 26px; margin-bottom: 8px; }
+  .lead {
+    font-size: 1.08rem;
+    border-left: 4px solid var(--accent);
+    padding-left: 16px;
+  }
+  .meta {
+    color: var(--muted);
+    font-size: .95rem;
+  }
+  .meta strong { color: var(--text); }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    overflow-x: auto;
+    display: block;
+  }
+  th, td {
+    border: 1px solid var(--border);
+    padding: 10px 12px;
+    text-align: left;
+    vertical-align: top;
+  }
+  th { font-weight: 700; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  pre {
+    background: var(--code);
+    color: var(--code-text);
+    padding: 18px;
+    border-radius: 10px;
+    overflow-x: auto;
+    white-space: pre;
+    font-size: .86rem;
+    line-height: 1.45;
+  }
+  code { font-family: Consolas, "Courier New", monospace; }
+  p code, li code, td code {
+    background: rgba(127,127,127,.16);
+    padding: 1px 5px;
+    border-radius: 4px;
+    font-size: .92em;
+  }
+  ul { padding-left: 22px; }
+  .note {
+    background: var(--note-bg);
+    border-left: 4px solid var(--accent);
+    padding: 14px 18px;
+    border-radius: 0 8px 8px 0;
+    margin: 18px 0;
+  }
+  .note.warn { border-left-color: var(--warn); }
+  .note.bad { border-left-color: var(--bad); }
+  .ok { color: var(--ok); font-weight: 700; }
+  .warn { color: var(--warn); font-weight: 700; }
+  .bad { color: var(--bad); font-weight: 700; }
+  .toc ul { list-style: none; padding-left: 0; columns: 2; column-gap: 32px; }
+  .toc li { margin-bottom: 6px; break-inside: avoid; }
+  .toc a { color: var(--accent); text-decoration: none; }
+  .toc a:hover { text-decoration: underline; }
+  @media (max-width: 720px) { .toc ul { columns: 1; } }
+</style>
+</head>
+<body>
+<main>
+
+  <section class="card">
+    <h1>SkySpark ingestion worker processor — AWS deployment</h1>
+    <p class="lead">The first AWS deployment of the SkySpark ingestion pipeline: what was
+    configured, why each choice was made, and the three failures that shaped it.</p>
+    <p class="meta">
+      <strong>Status:</strong> Deployed and ingesting in the development account, 2026-09-30/10-01.<br>
+      <strong>Source repository:</strong> <code>D:\Zonic\ai-skyspark-data-worker-processor</code>
+      (TripleQAI/ai-skyspark-data-worker-processor)<br>
+      <strong>Account:</strong> development <code>001634074733</code>, <code>us-east-1</code>
+    </p>
+    <p>This is not a design document — the repository's own
+    <code>docs/aws-production-architecture.md</code> describes the intended design. This describes
+    what actually runs, and the deviations forced by this account's real constraints.</p>
+    <p>The stack is <strong>independent of EKS and Jenkins</strong>. It is ECS Fargate + Lambda +
+    Step Functions, applied with Terraform from a workstation. It shares only the VPC, the NAT
+    gateway and the PostgreSQL instance with the existing platform.</p>
+  </section>
+
+  <section class="card toc">
+    <h2>Contents</h2>
+    <ul>
+      <li><a href="#architecture">1 · Architecture as deployed</a></li>
+      <li><a href="#control-store">2 · Step 1 — Control store</a></li>
+      <li><a href="#secrets">3 · Step 2 — Secrets</a></li>
+      <li><a href="#state">4 · Step 3 — Terraform state</a></li>
+      <li><a href="#foundation">5 · Step 4 — Foundation root</a></li>
+      <li><a href="#images">6 · Step 5 — Container images</a></li>
+      <li><a href="#orchestration">7 · Step 6 — Orchestration root</a></li>
+      <li><a href="#workers">8 · Step 7 — Workers root</a></li>
+      <li><a href="#trigger">9 · Step 8 — Triggering a run</a></li>
+      <li><a href="#failures">10 · Three failures</a></li>
+      <li><a href="#result">11 · Verified result</a></li>
+      <li><a href="#outstanding">12 · Outstanding items</a></li>
+      <li><a href="#commands">13 · Command reference</a></li>
+    </ul>
+  </section>
+
+  <section class="card" id="architecture">
+    <h2>1 · Architecture as deployed</h2>
+<pre><code>┌─ AWS development 001634074733 · us-east-1 ───────────────────────────┐
+│                                                                      │
+│  EventBridge Scheduler ──► Step Functions ──► Lambda planner ────┐   │
+│  skyspark-dev-schedules    skyspark-dev-        (VPC, 2 subnets) │   │
+│  (no schedules created)    ingestion   ▲                         │   │
+│                               │        └── Lambda status ◄───────┼── │
+│                               └─────────── Lambda inventory      │   │
+│                                                                  ▼   │
+│  ┌─ VPC vpc-01738eeb78ae67b39 (10.20.0.0/16) ───────────────────────┐│
+│  │  private 1a subnet-0864b2e585f156e9a                             ││
+│  │  private 1b subnet-06608ba8721b4cc00    sg-05a4928dccf405988     ││
+│  │                                                                  ││
+│  │  ECS skyspark-dev-workers (Fargate)                              ││
+│  │    dispatcher ×4 ──► SQS history_live / rules_nightly /          ││
+│  │                          metadata_sweep / backfill  (+4 DLQ)     ││
+│  │                              │                                   ││
+│  │                              ▼                                   ││
+│  │    worker ×4 (1 per queue, max 4/2/2/1) ──┬──► S3 raw            ││
+│  │       job_slots 4, fenced leases          └──► S3 certified      ││
+│  │    publisher ×2 ──► EventBridge skyspark-certified-dev           ││
+│  │    recovery ×1 ──► requeues stale leases                         ││
+│  └───────────────────┬──────────────────────────┬──────────────────┘│
+│                      │ NAT nat-118e8b83d8e7f8f19│                    │
+│  S3 raw / certified / quarantine  (KMS 9bcfe39b)│                    │
+│  ECR worker:v2 control:v1 lambda:v1             │                    │
+└─────────────────────┬───────────────────────────┼────────────────────┘
+                      ▼                           ▼
+        SkySpark insiot.insiteintelligence.com    Tiger Cloud tsdb:32064
+        /api/launchPad_ca141bd38c8fe5081          schema ingestion</code></pre>
+
+    <div class="note">
+      <strong>Shared with the existing platform:</strong> the VPC, the NAT gateway, and the
+      PostgreSQL instance. Everything else is dedicated. The Terraform creates
+      <strong>no network resources at all</strong> — it reads the VPC and subnets as inputs — so
+      EKS, the ALBs, <code>zonic-bff</code>, <code>zonic-authz</code> and pgfoundation are
+      untouched by any apply here, and a <code>terraform destroy</code> removes only what it
+      created.
+    </div>
+  </section>
+
+  <section class="card" id="control-store">
+    <h2>2 · Step 1 — Control store (Tiger Cloud)</h2>
+<pre><code>Tiger Cloud tsdb  ──┬── user_schema      (Authorization Server, pre-existing)
+                    ├── gold, agent_builder, data_ingestion_workflow_config
+                    └── ingestion        ← created here: 22 tables
+                         runs, jobs, job_children, attempts,
+                         dispatch_outbox, publication_outbox,
+                         raw_artifacts, sink_receipts, certifications,
+                         source_budgets, source_permits, checkpoints,
+                         inventory_versions, inventory_entities, ...
+
+       role: skyspark_control_app  (owns the schema, CONNECTION LIMIT 60)</code></pre>
+
+    <h3>Why a schema and not a database</h3>
+    <p>The plan was a separate <code>skyspark_control</code> database. Tiger Cloud refused it:</p>
+<pre><code>tsdb_admin: database skyspark_control is not an allowed database name
+HINT: Contact your administrator to configure the "tsdb_admin.allowed_databases"</code></pre>
+    <p><code>SHOW tsdb_admin.allowed_databases</code> returns exactly <code>tsdb</code>. This
+    service tier permits one database, so isolation is by <strong>schema plus a scoped
+    role</strong> instead of by database boundary.</p>
+
+    <p>This was checked before accepting it, not assumed safe:</p>
+    <table>
+      <thead><tr><th>Measure</th><th>Value</th></tr></thead>
+      <tbody>
+        <tr><td><code>max_connections</code></td><td class="num">200</td></tr>
+        <tr><td>In use at the time</td><td class="num">23</td></tr>
+        <tr><td><code>superuser_reserved_connections</code></td><td class="num">12</td></tr>
+        <tr><td>Headroom</td><td class="num">165</td></tr>
+        <tr><td>Cap on <code>skyspark_control_app</code></td><td class="num">60</td></tr>
+      </tbody>
+    </table>
+    <p>165 free against a 60 cap means ingestion cannot starve the Authorization Server. Had the
+    ceiling been one of Tiger's smaller tiers (25–100), a 60-connection ingestion role would have
+    been actively dangerous and a second service would have been the correct purchase.</p>
+
+    <h3>Why only the control migrations</h3>
+    <p><code>migrations/control/</code> has ten files; <code>migrations/target/</code> has four.
+    Only the control set was applied. The target schema (<code>ingestion_target</code>) holds
+    history observations, rule detections and metadata entities — and all three feeds in
+    <code>profile.yaml</code> write <code>target: s3</code>, so nothing would ever write there.
+    Running those migrations would have created four tables that stay empty forever.</p>
+
+    <div class="note warn">
+      <strong>Ordering note.</strong> There are <strong>two</strong> <code>0007_</code> files. The
+      runner sorts lexicographically, so <code>0007_history_splits.sql</code> precedes
+      <code>0007_metadata_inventory.sql</code>. Applying by hand in a console must preserve that.
+    </div>
+
+    <p>The runner (<code>skyspark-control migrate</code>) takes an advisory lock, records a SHA-256
+    per file in <code>public.control_schema_migrations</code>, and refuses a file whose content
+    changed after application. Re-running applied 0 — idempotent as designed.</p>
+
+    <h3>Console access needed an explicit grant</h3>
+    <p><code>skyspark_control_app</code> created and owns schema <code>ingestion</code>. A new
+    schema grants nothing to anyone else, and <code>tsdbadmin</code> is <strong>not</strong> a
+    superuser on Tiger Cloud (<code>rolsuper = False</code>), so the web console could see the
+    schema listed but got <code>permission denied for schema ingestion</code>.</p>
+    <p>Fixed by granting, <strong>as the owner</strong>, read-only access:</p>
+<pre><code>GRANT USAGE ON SCHEMA ingestion TO tsdbadmin;
+GRANT SELECT ON ALL TABLES IN SCHEMA ingestion TO tsdbadmin;
+ALTER DEFAULT PRIVILEGES IN SCHEMA ingestion GRANT SELECT ON TABLES TO tsdbadmin;</code></pre>
+    <p>Read-only deliberately: the console is for inspection, not for mutating run state behind
+    the workers' backs.</p>
+  </section>
+
+  <section class="card" id="secrets">
+    <h2>3 · Step 2 — Secrets</h2>
+<pre><code>tripleq/development/skyspark/control-db     {"dsn": "postgresql://skyspark_control_app@..."}
+tripleq/development/skyspark/credentials    {"username": "yzhao", "password": "..."}</code></pre>
+    <p>JSON with a <code>dsn</code> key is the shape ECS and Lambda secret injection expect — the
+    task definition names the JSON field, and the container receives only that value as an
+    environment variable.</p>
+
+    <div class="note warn">
+      Both were written through <strong>BOM-less temporary files</strong>, not inline
+      <code>--secret-string</code>. Windows PowerShell 5.1's <code>-Encoding utf8</code> emits a
+      UTF-8 byte-order mark, and AWS's JSON parser rejects those three leading bytes with a message
+      naming the parameter rather than the cause. The same trap is already documented in
+      <code>scripts/rotate-pgfoundation-caller-key.ps1</code>; it recurred here, and again later
+      against Docker's config parser.
+    </div>
+  </section>
+
+  <section class="card" id="state">
+    <h2>4 · Step 3 — Terraform state</h2>
+<pre><code>s3://skyspark-tfstate-001634074733-us-east-1   (versioned, development account)
+   skyspark-ingestion/foundation/terraform.tfstate
+   skyspark-ingestion/orchestration/terraform.tfstate
+   skyspark-ingestion/workers/terraform.tfstate</code></pre>
+
+    <h3>Why not the shared tooling bucket</h3>
+    <p>The obvious choice was <code>tripleq-tfstate-079247879111-us-east-1</code>, which every
+    ZonicPlatformInfrastructure root uses. The first <code>terraform init</code> against it
+    failed:</p>
+<pre><code>Error refreshing state: Unable to access object "skyspark-ingestion/foundation/terraform.tfstate"
+in S3 bucket "tripleq-tfstate-079247879111-us-east-1": StatusCode: 403 ... Forbidden</code></pre>
+    <p>Investigation found this needs <strong>three</strong> coordinated changes, not one:</p>
+    <ol>
+      <li>A new prefix in <code>bootstrap/iam.tf</code> — <code>state_access_policies</code> scopes
+      each principal to named key prefixes, and <code>skyspark-ingestion</code> is not among
+      them.</li>
+      <li>A cross-account bucket policy. The bucket's resource policy currently contains
+      <strong>only</strong> <code>DenyInsecureTransport</code> — there is no cross-account grant at
+      all.</li>
+      <li>Attaching <code>ZonicTerraformStateAccess-Development</code> to the development SSO
+      permission set. <code>aws iam list-entities-for-policy</code> shows that policy attached to
+      <strong>nothing</strong>; the five <code>ZonicTerraformStateAccess-*</code> policies exist but
+      are presently decorative.</li>
+    </ol>
+    <p>That is surgery on shared infrastructure, requiring its own review and a tooling-account
+    apply. A same-account state bucket costs about $0.02/month, needs no cross-account IAM, and
+    migrates to the shared bucket later with <code>terraform init -migrate-state</code> when those
+    grants exist.</p>
+
+    <div class="note bad">
+      Versioning is enabled deliberately: <code>prevent_destroy</code> guards the S3 buckets and the
+      KMS key, so a lost state file leaves resources that can neither be recreated under the same
+      names nor destroyed by Terraform.
+    </div>
+  </section>
+
+  <section class="card" id="foundation">
+    <h2>5 · Step 4 — Foundation root (23 resources)</h2>
+<pre><code>S3  skyspark-dev-raw-001634074733         versioned, SSE-KMS, deny-HTTP,
+    skyspark-dev-certified-001634074733   public access blocked, ownership enforced
+    skyspark-dev-quarantine-001634074733
+KMS alias/skyspark-dev-objects            customer-managed, rotating
+ECR skyspark-dev/{worker,control,lambda}  IMMUTABLE tags, scan-on-push</code></pre>
+
+    <h3>Why <code>create_private_endpoints = false</code></h3>
+    <p>The workers must reach <code>insiot.insiteintelligence.com</code> over HTTPS and Tiger Cloud
+    on port 32064. Both are <strong>public hosts</strong>, which VPC interface endpoints cannot
+    serve. The development VPC's existing NAT gateway carries that traffic, so no endpoints were
+    created and nothing was added to the account's existing ~$140/month VPC endpoint bill.</p>
+
+    <h3>Bucket names appear in two places</h3>
+    <p><code>skyspark-dev-raw</code> and friends are globally unique names and had to be suffixed
+    with the account ID. The names occur <strong>twice</strong> in
+    <code>config/environments/aws-dev/resources.yaml</code>: the <code>buckets:</code> list, and
+    <code>storage.raw_bucket</code> / <code>storage.certified_bucket</code>.</p>
+    <p><code>infra/foundation/main.tf</code>'s precondition compares all three conditions:</p>
+<pre><code>toset(values(local.buckets)) == toset(local.resources.buckets) &amp;&amp;
+local.buckets.raw == local.resources.storage.raw_bucket &amp;&amp;
+local.buckets.certified == local.resources.storage.certified_bucket</code></pre>
+    <p>Updating only the list produces a bare <code>Resource precondition failed</code> that does
+    not say which of the three checks broke. Both places must change together.</p>
+    <p><code>storage</code> has no <code>quarantine_bucket</code> key, and no code path writes to
+    that bucket — the foundation creates it ahead of a future need.</p>
+
+    <h3>PowerShell argument splitting</h3>
+    <p>Every Terraform invocation needs its arguments <strong>quoted</strong>:</p>
+<pre><code>terraform init "-backend-config=backend.hcl"
+terraform plan "-out=foundation.tfplan"</code></pre>
+    <p>PowerShell splits a native command's arguments on <code>=</code>, so the unquoted form sends
+    <code>-out</code> and <code>foundation.tfplan</code> separately and Terraform reports
+    <em>"Too many command line arguments. Did you mean to use -chdir?"</em> — a message that points
+    at the wrong thing entirely. This is the same rule already recorded for
+    <code>-target=aws_kms_key...</code>.</p>
+    <p>Variables were moved into <code>terraform.tfvars</code> files rather than <code>-var</code>
+    flags for the same reason: the nested <code>bucket_names</code> object would otherwise need
+    backtick-escaped inner quotes. <code>*.tfvars</code> is gitignored in that repository, so those
+    files stay local.</p>
+  </section>
+
+  <section class="card" id="images">
+    <h2>6 · Step 5 — Container images</h2>
+<pre><code>Dockerfile.worker   PACKAGE_EXTRAS="[source]"  SCRIPT_ROOT_DIR=readers/skyspark  → worker:v2
+Dockerfile.control                                                               → control:v1
+Dockerfile.lambda   --platform linux/amd64 --provenance=false                    → lambda:v1</code></pre>
+
+    <h3>Why images at all, and why built locally</h3>
+    <p>ECS Fargate runs only container images; the Lambdas could have been zip-packaged but are
+    images so that all three deployment targets carry <strong>the same reviewed
+    <code>resources.yaml</code></strong> at a known path (<code>/app/resources.yaml</code>,
+    <code>/var/task/resources.yaml</code>). The orchestration README is explicit that the Terraform
+    <code>resource_config_file</code> must be the same file packaged into the image. That is the
+    integrity property: the YAML Terraform validates is byte-identical to the one the container
+    runs.</p>
+
+    <div class="note warn">
+      Building locally was expedient, not architecturally right. This platform already has a
+      <code>service-build-pipeline</code> module and eight CodeBuild projects that build images in
+      AWS for the other services. <strong>Any permanent deployment of this pipeline should build
+      through CodeBuild</strong>, which needs a <code>buildspec.yml</code> in the project root and a
+      <code>local.services</code> entry in <code>environments/tooling/network/services.tf</code>.
+      Local Docker was accepted here only to avoid an hour of CI plumbing during a first sandbox
+      test.
+    </div>
+
+    <h3>Digest pinning</h3>
+    <p>Terraform receives <code>...@sha256:...</code>, never <code>:v1</code>. A tag can move; a
+    digest cannot, so the running container is provably the reviewed one. ECR repositories are also
+    <code>IMMUTABLE</code>, which blocks tag reuse — hence the rebuild below is <code>v2</code>, not
+    a re-push of <code>v1</code>. <code>--platform linux/amd64 --provenance=false</code> on the
+    Lambda image because Lambda rejects multi-architecture manifests.</p>
+
+    <h3>Docker Desktop on Windows: three dead ends</h3>
+    <p><code>docker login</code> against ECR failed with a bare <code>400 Bad Request</code>. Three
+    hypotheses were tried and two were wrong:</p>
+    <table>
+      <thead><tr><th>Hypothesis</th><th>Verdict</th></tr></thead>
+      <tbody>
+        <tr><td><code>credsStore: desktop</code> mishandles the ECR token</td><td class="bad">wrong — removing it changed nothing</td></tr>
+        <tr><td>A UTF-8 BOM in <code>config.json</code></td><td class="warn">real, but a separate bug; fixing it left the 400</td></tr>
+        <tr><td>Docker Desktop's internal proxy (<code>http.docker.internal:3128</code>)</td><td class="ok">the actual cause</td></tr>
+      </tbody>
+    </table>
+    <p><code>curl</code> with the same token against the same <code>/v2/</code> endpoint returned
+    <strong>200</strong>, proving AWS, IAM and the token were all fine and the fault was
+    client-side. Adding <code>*.amazonaws.com</code> to the proxy bypass saved to
+    <code>settings-store.json</code> but the daemon never honoured it, even after a full restart.</p>
+    <p><strong>What worked:</strong> <code>--password</code> instead of
+    <code>--password-stdin</code>.</p>
+<pre><code>$pw = aws ecr get-login-password --region us-east-1
+docker login --username AWS --password $pw $REG</code></pre>
+  </section>
+
+  <section class="card" id="orchestration">
+    <h2>7 · Step 6 — Orchestration root (14 resources)</h2>
+<pre><code>EventBridge Scheduler group  skyspark-dev-schedules   (no schedules created)
+Step Functions (Standard)    skyspark-dev-ingestion
+Lambda  skyspark-dev-planner / -status / -inventory   (three separate IAM roles)
+SQS     skyspark-dev-scheduler-dlq
+CloudWatch log groups, dashboard, 7 alarms</code></pre>
+
+    <h3>The Lambda concurrency override</h3>
+    <p>The first apply created all three functions and then failed setting concurrency:</p>
+<pre><code>InvalidParameterValueException: Specified ReservedConcurrentExecutions for function
+decreases account's UnreservedConcurrentExecution below its minimum value of [10].</code></pre>
+    <p><code>aws lambda get-account-settings</code> shows this account's total concurrency is
+    <strong>10</strong>, the unraised new-account default, not the usual 1000. AWS requires 10 to
+    remain unreserved, so the account has <strong>zero</strong> reservable concurrency and any
+    positive value fails. The module's variables validate <code>&gt;= 1</code>, so the value cannot
+    be lowered to zero through tfvars.</p>
+    <p><code>infra/orchestration/concurrency_override.tf</code> sets
+    <code>reserved_concurrent_executions = -1</code> (Terraform's "unset") on all three functions.
+    Terraform merges <code>*_override.tf</code> over the base configuration, so this avoided editing
+    reviewed module code.</p>
+
+    <div class="note">
+      <strong>What is lost:</strong> reserved concurrency is a per-function ceiling protecting the
+      control store from a planner storm opening more connections than PostgreSQL allows. Without it
+      the three functions share the account's pool of 10 — which is <em>tighter</em> than the
+      20/40/2 the module wanted, so the protection still exists, just account-wide.
+    </div>
+
+    <p><strong>Delete <code>concurrency_override.tf</code> and re-apply</strong> once a quota
+    increase lands:</p>
+<pre><code>aws service-quotas request-service-quota-increase `
+  --service-code lambda --quota-code L-B99A9384 --desired-value 1000 `
+  --profile tripleq-development --region us-east-1</code></pre>
+    <p>Until then the pipeline is bounded by 10 concurrent Lambda executions, not by the worker
+    fleet.</p>
+  </section>
+
+  <section class="card" id="workers">
+    <h2>8 · Step 7 — Workers root (~50 resources)</h2>
+<pre><code>ECS cluster  skyspark-dev-workers           (Container Insights enabled)
+  worker services   history_live, rules_nightly, metadata_sweep, backfill
+                    min 1 task each, max 4 / 2 / 2 / 1
+  control services  dispatcher ×4, publisher ×2, recovery ×1
+SQS          4 work queues + 4 DLQs, max_receive_count 4
+EventBridge  skyspark-certified-dev
+IAM          one task role per service, scoped to its own queue</code></pre>
+
+    <h3>S3 object ARNs must be exact prefixes</h3>
+<pre><code>raw_object_arns       = ["arn:aws:s3:::skyspark-dev-raw-001634074733/raw/dev-tenant/dev-scale/*"]
+certified_object_arns = ["arn:aws:s3:::skyspark-dev-certified-001634074733/certified/dev-tenant/dev-scale/*"]
+approved_scopes       = ["dev-tenant/dev-scale"]</code></pre>
+    <p>The module's validation <strong>rejects a bucket-wide <code>*</code></strong>, and its mocked
+    tests assert that rejection. This matters because a worker service consumes jobs across
+    projects: the IAM boundary is what stops a shared worker reading another tenant's objects,
+    independently of the job's own pinned tenant/project checks.</p>
+    <p>A quarantine ARN cannot be added to <code>certified_object_arns</code> — the regex requires a
+    literal <code>certified/</code> path segment. There is no <code>quarantine_object_arns</code>
+    variable, and nothing writes there.</p>
+
+    <h3><code>target_database_secret_arn</code> points at the control secret</h3>
+    <p>This variable is <strong>required</strong> in the workers root (unlike orchestration, where
+    it defaults to <code>null</code>), but all three feeds write <code>target: s3</code>, so no sink
+    ever resolves to TimescaleDB and the DSN is never opened. Pointing it at the control secret
+    satisfies the type without inventing a second database or editing reviewed code.</p>
+    <p>Note the task definition <em>does</em> inject <code>TARGET_DATABASE_URL</code>, and
+    <code>control_cli.py</code> constructs a Timescale verifier when that variable is set. It is
+    harmless — no feed targets Timescale — but an earlier claim in this deployment that the variable
+    "is never set in AWS" was wrong.</p>
+
+    <h3>Why everything lands in S3, verified four ways</h3>
+    <table>
+      <thead><tr><th>Check</th><th>Result</th></tr></thead>
+      <tbody>
+        <tr><td>Feed targets in the uploaded config bundle</td><td>all three <code>target: 's3'</code></td></tr>
+        <tr><td>Reader manifests</td><td>each declares <code>targets=['s3']</code> — Timescale not permitted</td></tr>
+        <tr><td>Worker verifier map</td><td><code>{TargetKind.S3: ...}</code> plus Timescale only if <code>TARGET_DATABASE_URL</code> set</td></tr>
+        <tr><td>Completion check</td><td><code>"completion target differs from pinned profile"</code></td></tr>
+      </tbody>
+    </table>
+    <p>The strongest guard is the manifest: the readers do not list <code>timescale</code> as a
+    permitted target, so config resolution fails before a run starts. <code>EvidenceVerifier</code>
+    additionally re-reads and re-checksums each S3 object before <code>certify_job</code> marks
+    anything certified, so a job cannot certify against evidence that did not land.</p>
+  </section>
+
+  <section class="card" id="trigger">
+    <h2>9 · Step 8 — Triggering a run</h2>
+    <p>The state machine input is a <code>ScheduledTrigger</code> — eight strictly validated
+    fields:</p>
+<pre><code>{
+  "schema_version": 1,
+  "tenant_id": "dev-tenant",
+  "project_id": "dev-scale",
+  "feed": "metadata",
+  "profile_id": "aws-dev",
+  "config_hash": "1a567aff21c03879ddca68ea9e186acfbb4b554600c7c2113bba92c4ee7ab0c8",
+  "config_ref": "s3://skyspark-dev-raw-001634074733/config/dev-tenant/dev-scale/aws-dev.json?versionId=...",
+  "scheduled_at": "2026-09-27T03:00:00Z"
+}</code></pre>
+    <p>It carries <strong>no site list, endpoint or credentials</strong> — everything else comes
+    from the pinned config bundle, a single JSON object with exactly the keys
+    <code>schema_version</code>, <code>profile</code>, <code>binding</code>,
+    <code>manifest</code>. The planner downloads that exact object version, recomputes the hash and
+    refuses to plan if it differs from <code>config_hash</code>.</p>
+
+    <h3><code>scheduled_at</code> must be a time the feed would really have fired</h3>
+    <table>
+      <thead><tr><th>Feed</th><th>Schedule</th><th>Valid example</th></tr></thead>
+      <tbody>
+        <tr><td>metadata</td><td>weekly, SUN 03:00 UTC</td><td><code>2026-09-27T03:00:00Z</code></td></tr>
+        <tr><td>rules</td><td>daily, 02:00 UTC</td><td><code>2026-09-30T02:00:00Z</code></td></tr>
+        <tr><td>history</td><td>every 5 minutes</td><td>last boundary minus the 5-minute source lag</td></tr>
+      </tbody>
+    </table>
+    <p>The planner derives window boundaries from this value, so an arbitrary minute is rejected
+    with <code>scheduled time does not match configured UTC time</code>. History additionally
+    validates <code>due.minute % 5 == 0</code> and respects
+    <code>history_source_lag_minutes: 5</code>.</p>
+  </section>
+
+  <section class="card" id="failures">
+    <h2>10 · Three failures and what they actually were</h2>
+    <table>
+      <thead><tr><th>Failure</th><th>Cause</th><th>Fix</th></tr></thead>
+      <tbody>
+        <tr>
+          <td>Execution 1 <code>FAILED</code> instantly</td>
+          <td><code>scheduled_at</code> taken from <code>Get-Date</code>; metadata runs weekly SUN 03:00 UTC</td>
+          <td>use a real due time</td>
+        </tr>
+        <tr>
+          <td>Execution 2 <code>BlockedCoverage</code>, 1000 attempts <code>retry</code>/<code>ValueError</code> in ~200 ms</td>
+          <td>secret key named <code>SKYSPARK_CREDENTIALS</code>; readers declare <strong><code>SKYSPARK_SOURCE_CREDENTIALS</code></strong></td>
+          <td>renamed in tfvars</td>
+        </tr>
+        <tr>
+          <td>(same run)</td>
+          <td>worker image built without <code>PACKAGE_EXTRAS="[source]"</code>, so <code>phable</code> was absent</td>
+          <td>rebuilt as <code>worker:v2</code></td>
+        </tr>
+      </tbody>
+    </table>
+    <p>All three live readers declare <code>env_names = ("RESOURCE_CONFIG_PATH",
+    "SKYSPARK_SOURCE_CREDENTIALS")</code>. The worker passes a script <strong>only</strong> the
+    variables its reviewed manifest names, so a differently spelled key is simply absent inside the
+    subprocess: the script raises <code>ValueError</code> before any network call and before writing
+    a log line.</p>
+
+    <h3>Two diagnostic corrections worth recording</h3>
+    <div class="note bad">
+      <strong>Empty CloudWatch logs were never a symptom.</strong>
+      <code>src/ingestion/core/worker.py</code> contains no logging at all — no <code>logging</code>
+      import, no log calls. The worker log groups stay empty whether it succeeds or fails. The real
+      instrument is <code>ingestion.attempts</code>, specifically its <code>error_class</code>
+      column.
+    </div>
+<pre><code>SELECT attempt_no, outcome, coalesce(error_class,'(none)') AS error, count(*)
+FROM ingestion.attempts GROUP BY 1,2,3 ORDER BY 1;</code></pre>
+    <p><strong>The <code>[source]</code> extra was not the cause</strong> of the failures, though it
+    is genuinely required — <code>Dockerfile.worker</code>'s own comment says so, and the readers
+    import <code>ingestion.adapters.skyspark.live</code>, which needs <code>phable</code>. The v2
+    rebuild was necessary but did not explain the <code>ValueError</code>.</p>
+
+    <h3>SQS visibility delays redelivery</h3>
+    <p>After fixing the task definition, no new attempts appeared for roughly fifteen minutes. All
+    1,000 messages sat in <code>ApproximateNumberOfMessagesNotVisible</code> under the failed
+    attempts' 900-second visibility timeout (<code>worker.visibility_seconds: 900</code>). Nothing
+    was wrong; it was waiting. Purging the queue and re-triggering is the faster path, and it also
+    resets <code>max_receive_count</code>, which the failed attempts had already consumed one of
+    four.</p>
+  </section>
+
+  <section class="card" id="result">
+    <h2>11 · Verified result</h2>
+    <p>First metadata run, 1,000 replica sites (point-in-time snapshot while still progressing):</p>
+<pre><code>jobs          certified 43, running 8, planned 949
+attempts      attempt 1: retry/ValueError ×1000   (pre-fix)
+              attempt 2: certified ×43, in flight ×8
+raw_artifacts 43    certifications 43    site completions 43
+S3 raw        227 MB and climbing   (~15 MB per site)
+S3 certified  267 MB and climbing</code></pre>
+    <p>Objects land under:</p>
+<pre><code>s3://skyspark-dev-raw-001634074733/raw/dev-tenant/dev-scale/metadata/&lt;run&gt;/&lt;job&gt;/&lt;sha&gt;.bin
+                                                                             + .bin.manifest.json
+s3://skyspark-dev-certified-001634074733/certified/dev-tenant/dev-scale/metadata/&lt;run&gt;/&lt;job&gt;/&lt;sha&gt;.jsonl</code></pre>
+
+    <div class="note">
+      Concurrency is capped by the per-project source permit pool: all 1,000 replica sites dedupe to
+      <strong>one</strong> real SkySpark site
+      (<code>p:launchPad_ca141bd38c8fe5081:r:2c2c8620-747a608c</code>, "One Hughes Landing"), so
+      simultaneous source calls are limited deliberately. At roughly 15 MB and a few seconds per
+      site, a full 1,000-site metadata run is on the order of 2–4 hours and about 15 GB in S3.
+    </div>
+  </section>
+
+  <section class="card" id="outstanding">
+    <h2>12 · Outstanding items</h2>
+    <table>
+      <thead><tr><th>Item</th><th>Action</th></tr></thead>
+      <tbody>
+        <tr><td><strong>Seven Fargate tasks run continuously</strong></td><td>≈ $60/month. Set <code>min_tasks: 0</code> or <code>terraform destroy</code> the workers root when testing stops.</td></tr>
+        <tr><td><strong>Lambda concurrency capped at 10</strong></td><td>Request quota <code>L-B99A9384</code>; then delete <code>infra/orchestration/concurrency_override.tf</code> and re-apply.</td></tr>
+        <tr><td><strong>Images built on a workstation</strong></td><td>Move to CodeBuild via the existing <code>service-build-pipeline</code> module before any non-sandbox use.</td></tr>
+        <tr><td><strong>State in a per-project bucket</strong></td><td>Migrate to the shared tooling bucket once <code>bootstrap/iam.tf</code>, the bucket policy and the SSO attachment are in place.</td></tr>
+        <tr><td><strong>Credentials exposed in conversation</strong></td><td>The SkySpark password, a live SkySpark session cookie and <code>attest-key</code>, and the Tiger Cloud <code>tsdbadmin</code> password were all pasted during this deployment. All should be rotated.</td></tr>
+        <tr><td><strong><code>receipt_mode: observed</code></strong></td><td>Live SkySpark returns no completeness receipt, so these readers accept observed receipts. Production keeps <code>provider</code> mode, where they refuse to run. Certified output here is not production-grade.</td></tr>
+        <tr><td><strong>No schedules created</strong></td><td><code>skyspark-schedules reconcile --apply</code> creates them, disabled by default. Runs are manual until then.</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section class="card" id="commands">
+    <h2>13 · Command reference</h2>
+<pre><code># Control store migrations (from the project root)
+$env:CONTROL_DATABASE_URL = "postgresql://skyspark_control_app:&lt;pw&gt;@aqy26lurzx.lhy6ly0as0.tsdb.cloud.timescale.com:32064/tsdb?sslmode=require"
+skyspark-control migrate --migrations migrations/control
+
+# Terraform, in order. Arguments MUST be quoted for PowerShell.
+cd infra\foundation    ; terraform init "-backend-config=backend.hcl" ; terraform plan "-out=foundation.tfplan"    ; terraform apply "foundation.tfplan"
+cd ..\orchestration    ; terraform init "-backend-config=backend.hcl" ; terraform plan "-out=orchestration.tfplan" ; terraform apply "orchestration.tfplan"
+cd ..\workers          ; terraform init "-backend-config=backend.hcl" ; terraform plan "-out=workers.tfplan"       ; terraform apply "workers.tfplan"
+
+# ECR login (--password, not --password-stdin, on Docker Desktop for Windows)
+$REG = "001634074733.dkr.ecr.us-east-1.amazonaws.com"
+$pw = aws ecr get-login-password --region us-east-1
+docker login --username AWS --password $pw $REG
+
+# Status. CloudWatch worker logs are always empty -- use the control store.
+SELECT attempt_no, outcome, coalesce(error_class,'(none)') AS error, count(*)
+FROM ingestion.attempts GROUP BY 1,2,3 ORDER BY 1;
+SELECT status, count(*) FROM ingestion.jobs GROUP BY status;
+SELECT count(*) FROM ingestion.raw_artifacts;
+
+# Stop a run
+aws stepfunctions stop-execution --execution-arn &lt;arn&gt;</code></pre>
+
+    <h3>Key identifiers</h3>
+    <table>
+      <thead><tr><th>Resource</th><th>Value</th></tr></thead>
+      <tbody>
+        <tr><td>VPC</td><td><code>vpc-01738eeb78ae67b39</code> (10.20.0.0/16)</td></tr>
+        <tr><td>Private subnets</td><td><code>subnet-0864b2e585f156e9a</code> (1a), <code>subnet-06608ba8721b4cc00</code> (1b)</td></tr>
+        <tr><td>Security group</td><td><code>sg-05a4928dccf405988</code> (<code>skyspark-dev-tasks</code>, egress only)</td></tr>
+        <tr><td>NAT gateway</td><td><code>nat-118e8b83d8e7f8f19</code></td></tr>
+        <tr><td>KMS key</td><td><code>arn:aws:kms:us-east-1:001634074733:key/9bcfe39b-8489-4450-b13e-990f530c2dac</code></td></tr>
+        <tr><td>State machine</td><td><code>arn:aws:states:us-east-1:001634074733:stateMachine:skyspark-dev-ingestion</code></td></tr>
+        <tr><td>ECS cluster</td><td><code>skyspark-dev-workers</code></td></tr>
+        <tr><td>Control secret</td><td><code>tripleq/development/skyspark/control-db</code></td></tr>
+        <tr><td>Source secret</td><td><code>tripleq/development/skyspark/credentials</code></td></tr>
+      </tbody>
+    </table>
+  </section>
+
+</main>
+</body>
+</html>

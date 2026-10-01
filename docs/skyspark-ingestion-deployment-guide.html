@@ -154,10 +154,11 @@
       <li><a href="#orchestration">7 · Step 6 — Orchestration root</a></li>
       <li><a href="#workers">8 · Step 7 — Workers root</a></li>
       <li><a href="#trigger">9 · Step 8 — Triggering a run</a></li>
-      <li><a href="#failures">10 · Three failures</a></li>
-      <li><a href="#result">11 · Verified result</a></li>
-      <li><a href="#outstanding">12 · Outstanding items</a></li>
-      <li><a href="#commands">13 · Command reference</a></li>
+      <li><a href="#distribution">10 · How 1,000 sites distribute</a></li>
+      <li><a href="#failures">11 · Three failures</a></li>
+      <li><a href="#result">12 · Verified result</a></li>
+      <li><a href="#outstanding">13 · Outstanding items</a></li>
+      <li><a href="#commands">14 · Command reference</a></li>
     </ul>
   </section>
 
@@ -542,8 +543,109 @@ approved_scopes       = ["dev-tenant/dev-scale"]</code></pre>
     <code>history_source_lag_minutes: 5</code>.</p>
   </section>
 
+  <section class="card" id="distribution">
+    <h2>10 · How 1,000 sites distribute across the pipeline</h2>
+    <p>Two feeds split the same 1,000 sites very differently, and the difference is entirely a
+    <code>partition.max_ids</code> value in the config bundle — not an AWS setting.</p>
+
+    <h3>Metadata: one job per site</h3>
+<pre><code>Step Functions ──► Lambda planner
+     partition: by siteRef, max_ids 1   ──►  ONE JOB PER SITE
+     1000 jobs + 1000 dispatch_outbox rows, ONE transaction
+                       │
+ECS dispatcher ×4      ▼   claim_dispatch: SELECT ... FOR UPDATE SKIP LOCKED
+                           SendMessageBatch, ≤10 refs per call  ──► 100 API calls
+                       │
+SQS metadata_sweep     ▼   1000 messages, long-poll, visibility 900s
+                       │
+ECS worker ×1-2        ▼   job_slots 4 each  =  4-8 concurrent jobs
+                           fenced lease ──► SOURCE PERMIT ──► SkySpark
+                       │
+S3 raw + certified     ▼   EvidenceVerifier re-reads and re-checksums
+                       │
+certify_job            ▼   certification + site completion + publication_outbox</code></pre>
+    <p>Dispatch is <strong>shared, not sharded</strong>: four dispatcher tasks compete over one
+    outbox with <code>FOR UPDATE SKIP LOCKED</code>. Workers self-balance through SQS with no
+    assignment, which is why the observed split across two worker tasks was 123 / 98 rather than
+    exactly even.</p>
+
+    <h3>History: twenty jobs per site, every five minutes</h3>
+<pre><code>EventBridge Scheduler (every 5 min) ──► Step Functions ──► Lambda planner
+     pins the certified inventory version produced by the metadata run
+     window = [T-10min, T-5min)          &lt;- history_source_lag_minutes: 5
+     for each of 1000 sites:
+         ids    = site.historized_point_ids    &lt;- FROM THE INVENTORY, not config
+         groups = chunks(ids, max_ids=500)
+                  10,000 points/site / 500 = 20 jobs per site
+                       │
+     1000 x 20 = 20,000 JOBS, one transaction
+                       │
+ECS dispatcher ×4      ▼   20,000 / 10 = 2,000 SendMessageBatch calls
+SQS history_live       ▼   20,000 messages, visibility 900s
+ECS worker ×1-4        ▼   4 tasks x 4 slots = up to 16 concurrent jobs
+Source permit pool     ▼   max_concurrent_calls: 12          &lt;- THE CEILING
+SkySpark hisRead       ▼   ≤500 point IDs per call, replicas deduped to real IDs
+S3 + verify + certify  ▼   a site checkpoint advances only when ALL 20 partitions certify</code></pre>
+
+    <h3>Which component owns which split</h3>
+    <table>
+      <thead><tr><th>Stage</th><th>Count</th><th>Responsible component</th></tr></thead>
+      <tbody>
+        <tr><td>Sites</td><td class="num">1,000</td><td><strong>Lambda planner</strong> — reads <code>approved_sites</code> from the config bundle in S3</td></tr>
+        <tr><td>Points per site</td><td class="num">10,000</td><td><strong>Lambda inventory</strong> — publishes the certified inventory the planner reads</td></tr>
+        <tr><td>Jobs per site</td><td class="num">20</td><td><strong>Lambda planner</strong> — <code>_chunks(ids, max_ids=500)</code>, <code>core/planner.py:104</code></td></tr>
+        <tr><td>Jobs per 5-min cycle</td><td class="num">20,000</td><td><strong>Lambda planner</strong>, written to PostgreSQL <code>jobs</code> + <code>dispatch_outbox</code></td></tr>
+        <tr><td>SQS batch calls</td><td class="num">2,000</td><td><strong>ECS dispatcher</strong> (4 tasks) — <code>SendMessageBatch</code>, ≤10 per call</td></tr>
+        <tr><td>Concurrent source calls</td><td class="num">12</td><td><strong>PostgreSQL</strong> <code>ingestion.source_permits</code> — <em>not</em> an AWS service</td></tr>
+      </tbody>
+    </table>
+
+    <div class="note">
+      <strong>The concurrency ceiling is a database table, not an AWS limit.</strong> Workers
+      acquire a fenced row in <code>ingestion.source_permits</code> before calling SkySpark and
+      renew it on a heartbeat; a dead task's lease expires and returns the permit. ECS autoscaling
+      therefore cannot raise throughput — the ceiling lives in PostgreSQL.
+      <br><br>
+      <strong>No AWS resource decides "20 jobs per site."</strong> That falls out of
+      <code>max_ids: 500</code> in the config bundle divided into the point count the inventory
+      reports. Changing the YAML changes the split; no AWS resource is involved.
+    </div>
+
+    <h3>Three nested ceilings</h3>
+    <table>
+      <thead><tr><th>Limit</th><th>Value</th><th>Effect</th></tr></thead>
+      <tbody>
+        <tr><td>ECS tasks</td><td class="num">1–4 per queue</td><td>how many worker processes exist</td></tr>
+        <tr><td><code>worker.job_slots</code></td><td class="num">4 per task</td><td>4–16 jobs in flight</td></tr>
+        <tr><td><strong><code>source_policy.max_concurrent_calls</code></strong></td><td class="num"><strong>12</strong></td><td>ceiling on simultaneous SkySpark calls</td></tr>
+      </tbody>
+    </table>
+    <p>All 1,000 replica sites map to <strong>one</strong> real site
+    (<code>p:launchPad_ca141bd38c8fe5081:r:2c2c8620-747a608c</code>). Without the permit pool, 16
+    concurrent workers would hammer a single SkySpark server. Scaling ECS beyond three tasks
+    achieves nothing here.</p>
+
+    <h3>Why a 5-minute history run is expected to report <code>partial</code></h3>
+    <p>20,000 jobs per cycle against 12 concurrent source calls and a 900-second deadline. Even at
+    one second per call that is roughly 28 minutes of serialised source time for a window that must
+    finish in 15. The metadata run's observed rate — about 170 sites per 25 minutes — implies over
+    45 hours for 20,000 jobs, while the next cycle starts in five minutes.</p>
+
+    <div class="note warn">
+      That is the measurement, not a defect: 1,000 replica sites against one real SkySpark server
+      is deliberately a saturation test, and <code>partial</code> is the honest reported outcome.
+    </div>
+
+    <p><strong>Prerequisite:</strong> history cannot plan at all until a certified metadata run has
+    published an inventory. <code>inventory_entities</code> is empty until then, and the planner
+    raises <code>certified inventory is missing site</code>.</p>
+    <p><strong>Job splitting can inflate the count further.</strong> If a <code>hisRead</code>
+    response would exceed the safe return size, <code>split_history_job</code> halves it into child
+    jobs — bounded at depth 12, a 30-second minimum window, and 8,192 descendants per job.</p>
+  </section>
+
   <section class="card" id="failures">
-    <h2>10 · Three failures and what they actually were</h2>
+    <h2>11 · Three failures and what they actually were</h2>
     <table>
       <thead><tr><th>Failure</th><th>Cause</th><th>Fix</th></tr></thead>
       <tbody>
@@ -595,14 +697,14 @@ FROM ingestion.attempts GROUP BY 1,2,3 ORDER BY 1;</code></pre>
   </section>
 
   <section class="card" id="result">
-    <h2>11 · Verified result</h2>
+    <h2>12 · Verified result</h2>
     <p>First metadata run, 1,000 replica sites (point-in-time snapshot while still progressing):</p>
-<pre><code>jobs          certified 43, running 8, planned 949
+<pre><code>jobs          certified 679, running 8, planned 313
 attempts      attempt 1: retry/ValueError ×1000   (pre-fix)
-              attempt 2: certified ×43, in flight ×8
-raw_artifacts 43    certifications 43    site completions 43
-S3 raw        227 MB and climbing   (~15 MB per site)
-S3 certified  267 MB and climbing</code></pre>
+              attempt 2: certified ×679, in flight ×8
+raw_artifacts 679   certifications 679   site completions 679
+S3 raw        2.7 GB and climbing    (~15 MB per site)
+S3 certified  3.2 GB and climbing</code></pre>
     <p>Objects land under:</p>
 <pre><code>s3://skyspark-dev-raw-001634074733/raw/dev-tenant/dev-scale/metadata/&lt;run&gt;/&lt;job&gt;/&lt;sha&gt;.bin
                                                                              + .bin.manifest.json
@@ -618,7 +720,7 @@ s3://skyspark-dev-certified-001634074733/certified/dev-tenant/dev-scale/metadata
   </section>
 
   <section class="card" id="outstanding">
-    <h2>12 · Outstanding items</h2>
+    <h2>13 · Outstanding items</h2>
     <table>
       <thead><tr><th>Item</th><th>Action</th></tr></thead>
       <tbody>
@@ -634,7 +736,7 @@ s3://skyspark-dev-certified-001634074733/certified/dev-tenant/dev-scale/metadata
   </section>
 
   <section class="card" id="commands">
-    <h2>13 · Command reference</h2>
+    <h2>14 · Command reference</h2>
 <pre><code># Control store migrations (from the project root)
 $env:CONTROL_DATABASE_URL = "postgresql://skyspark_control_app:&lt;pw&gt;@aqy26lurzx.lhy6ly0as0.tsdb.cloud.timescale.com:32064/tsdb?sslmode=require"
 skyspark-control migrate --migrations migrations/control

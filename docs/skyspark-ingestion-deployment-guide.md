@@ -442,7 +442,112 @@ The planner derives window boundaries from this value, so an arbitrary minute is
 
 ---
 
-## 10. Three failures and what they actually were
+## 10. How 1,000 sites distribute across the pipeline
+
+Two feeds split the same 1,000 sites very differently, and the difference is entirely a
+`partition.max_ids` value in the config bundle — not an AWS setting.
+
+### Metadata: one job per site
+
+```
+Step Functions ──► Lambda planner
+     partition: by siteRef, max_ids 1   ──►  ONE JOB PER SITE
+     1000 jobs + 1000 dispatch_outbox rows, ONE transaction
+                       │
+ECS dispatcher ×4      ▼   claim_dispatch: SELECT ... FOR UPDATE SKIP LOCKED
+                           SendMessageBatch, <=10 refs per call  ──► 100 API calls
+                       │
+SQS metadata_sweep     ▼   1000 messages, long-poll, visibility 900s
+                       │
+ECS worker ×1-2        ▼   job_slots 4 each  =  4-8 concurrent jobs
+                           fenced lease ──► SOURCE PERMIT ──► SkySpark
+                       │
+S3 raw + certified     ▼   EvidenceVerifier re-reads and re-checksums
+                       │
+certify_job            ▼   certification + site completion + publication_outbox
+```
+
+Dispatch is **shared, not sharded**: four dispatcher tasks compete over one outbox with
+`FOR UPDATE SKIP LOCKED`. Workers self-balance through SQS with no assignment, which is why the
+observed split across two worker tasks was 123 / 98 rather than exactly even.
+
+### History: twenty jobs per site, every five minutes
+
+```
+EventBridge Scheduler (every 5 min) ──► Step Functions ──► Lambda planner
+     pins the certified inventory version produced by the metadata run
+     window = [T-10min, T-5min)          <- history_source_lag_minutes: 5
+     for each of 1000 sites:
+         ids    = site.historized_point_ids    <- FROM THE INVENTORY, not config
+         groups = chunks(ids, max_ids=500)
+                  10,000 points/site / 500 = 20 jobs per site
+                       │
+     1000 x 20 = 20,000 JOBS, one transaction
+                       │
+ECS dispatcher ×4      ▼   20,000 / 10 = 2,000 SendMessageBatch calls
+SQS history_live       ▼   20,000 messages, visibility 900s
+ECS worker ×1-4        ▼   4 tasks x 4 slots = up to 16 concurrent jobs
+Source permit pool     ▼   max_concurrent_calls: 12          <- THE CEILING
+SkySpark hisRead       ▼   <=500 point IDs per call, replicas deduped to real IDs
+S3 + verify + certify  ▼   a site checkpoint advances only when ALL 20 partitions certify
+```
+
+### Which component owns which split
+
+| Stage | Count | Responsible component |
+| --- | ---: | --- |
+| Sites | 1,000 | **Lambda planner** — reads `approved_sites` from the config bundle in S3 |
+| Points per site | 10,000 | **Lambda inventory** — publishes the certified inventory the planner reads |
+| Jobs per site | 20 | **Lambda planner** — `_chunks(ids, max_ids=500)`, `core/planner.py:104` |
+| Jobs per 5-min cycle | 20,000 | **Lambda planner**, written to PostgreSQL `jobs` + `dispatch_outbox` |
+| SQS batch calls | 2,000 | **ECS dispatcher** (4 tasks) — `SendMessageBatch`, <=10 per call |
+| Concurrent source calls | 12 | **PostgreSQL** `ingestion.source_permits` — *not* an AWS service |
+
+Two points worth stating plainly, because both are easy to assume wrong:
+
+**The concurrency ceiling is a database table, not an AWS limit.** Workers acquire a fenced row
+in `ingestion.source_permits` before calling SkySpark and renew it on a heartbeat; a dead task's
+lease expires and returns the permit. ECS autoscaling therefore cannot raise throughput — the
+ceiling lives in PostgreSQL.
+
+**No AWS resource decides "20 jobs per site."** That falls out of `max_ids: 500` in the config
+bundle divided into the point count the inventory reports. Changing the YAML changes the split;
+no AWS resource is involved.
+
+### Three nested ceilings
+
+| Limit | Value | Effect |
+| --- | ---: | --- |
+| ECS tasks | 1–4 per queue | how many worker processes exist |
+| `worker.job_slots` | 4 per task | 4–16 jobs in flight |
+| **`source_policy.max_concurrent_calls`** | **12** | ceiling on simultaneous SkySpark calls |
+
+All 1,000 replica sites map to **one** real site
+(`p:launchPad_ca141bd38c8fe5081:r:2c2c8620-747a608c`). Without the permit pool, 16 concurrent
+workers would hammer a single SkySpark server. Scaling ECS beyond three tasks achieves nothing
+here.
+
+### Why a 5-minute history run is expected to report `partial`
+
+20,000 jobs per cycle against 12 concurrent source calls and a 900-second deadline. Even at one
+second per call that is roughly 28 minutes of serialised source time for a window that must
+finish in 15. The metadata run's observed rate — about 170 sites per 25 minutes — implies over
+45 hours for 20,000 jobs, while the next cycle starts in five minutes.
+
+That is the measurement, not a defect: 1,000 replica sites against one real SkySpark server is
+deliberately a saturation test, and `partial` is the honest reported outcome.
+
+**Prerequisite:** history cannot plan at all until a certified metadata run has published an
+inventory. `inventory_entities` is empty until then, and the planner raises
+`certified inventory is missing site`.
+
+**Job splitting can inflate the count further.** If a `hisRead` response would exceed the safe
+return size, `split_history_job` halves it into child jobs — bounded at depth 12, a 30-second
+minimum window, and 8,192 descendants per job.
+
+---
+
+## 11. Three failures and what they actually were
 
 | Failure | Cause | Fix |
 | --- | --- | --- |
@@ -482,7 +587,7 @@ waiting. Purging the queue and re-triggering is the faster path, and it also res
 
 ---
 
-## 11. Verified result
+## 12. Verified result
 
 First metadata run, 1,000 replica sites:
 
@@ -511,7 +616,7 @@ source calls are capped deliberately. At roughly 15 MB and a few seconds per sit
 
 ---
 
-## 12. Outstanding items
+## 13. Outstanding items
 
 | Item | Action |
 | --- | --- |
@@ -525,7 +630,7 @@ source calls are capped deliberately. At roughly 15 MB and a few seconds per sit
 
 ---
 
-## 13. Command reference
+## 14. Command reference
 
 ```powershell
 # Control store migrations (from the project root)

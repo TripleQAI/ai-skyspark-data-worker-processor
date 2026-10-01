@@ -4,9 +4,9 @@
 # (here and in the foundation bucket_names input) before the first apply.
 region: us-east-1
 buckets:
-  - skyspark-dev-raw
-  - skyspark-dev-certified
-  - skyspark-dev-quarantine
+  - skyspark-dev-raw-001634074733
+  - skyspark-dev-certified-001634074733
+  - skyspark-dev-quarantine-001634074733
 work_queues:
   - history_live
   - rules_nightly
@@ -119,8 +119,12 @@ worker:
     refresh_seconds: 300
     http_timeout_seconds: 3
 storage:
-  raw_bucket: skyspark-dev-raw
-  certified_bucket: skyspark-dev-certified
+  # Must match the `buckets:` list above AND the foundation root's bucket_names
+  # input -- infra/foundation/main.tf's precondition compares all three, so a
+  # rename in one place alone fails the plan rather than creating a bucket
+  # nothing writes to.
+  raw_bucket: skyspark-dev-raw-001634074733
+  certified_bucket: skyspark-dev-certified-001634074733
   max_raw_bytes: 268435456
   max_certified_bytes: 268435456
   max_certified_rows: 200000

@@ -15,11 +15,14 @@ profile_id: aws-dev
 tenant_id: dev-tenant
 project_id: dev-scale
 # The project's Haystack API URL: the SkySpark API root plus the project name.
-endpoint: http://44.221.91.30:8888/api/REPLACE_WITH_PROJECT
+# HTTPS to a hostname, not the plain-HTTP bare IP the template shipped with.
+endpoint: https://insiot.insiteintelligence.com/api/launchPad_ca141bd38c8fe5081
 # Secrets Manager secret holding {"username": ..., "password": ...}.
-secret_ref: aws-secretsmanager://arn:aws:secretsmanager:us-east-1:REPLACE_WITH_ACCOUNT:secret:REPLACE_WITH_SECRET_NAME
+secret_ref: aws-secretsmanager://arn:aws:secretsmanager:us-east-1:001634074733:secret:tripleq/development/skyspark/credentials
 # The real site every replica duplicates: its Haystack id, without "@".
-source_site_ref: REPLACE_WITH_SOURCE_SITE_REF
+# From readAll(site): "One Hughes Landing". The colons are part of the Haystack
+# ref, not a separator -- the generator's pattern admits them deliberately.
+source_site_ref: p:launchPad_ca141bd38c8fe5081:r:2c2c8620-747a608c
 sites:
   count: 1000
   first_index: 1
@@ -31,7 +34,13 @@ replica:
 history_source_lag_minutes: 5
 history_lookback_windows: 0
 # The source site's IANA zone and the tz tag SkySpark writes on rule rows.
-rules_source_timezone: REPLACE_WITH_IANA_ZONE
-rules_source_tz_tags: [REPLACE_WITH_SKYSPARK_TZ_TAG]
+#
+# TWO SPELLINGS OF ONE ZONE, deliberately not merged. SkySpark writes the short
+# Haystack name ("Chicago") on its rows; ZoneInfo needs the full IANA name, and
+# contracts/config.py validates it with ZoneInfo(), where bare "Chicago" raises
+# ZoneInfoNotFoundError. Matching rows uses the first; computing day boundaries
+# uses the second.
+rules_source_timezone: America/Chicago
+rules_source_tz_tags: [Chicago]
 rules_settlement_minutes: 60
 rules_lookback_days: 0
